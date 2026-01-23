@@ -9,8 +9,8 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
 
-    // รอไฟล์สูงสุด 60 วินาที
-    for (let i = 0; i < 60; i++) {
+    // รอไฟล์สูงสุด 120 วินาที (เผื่อเน็ตช้า)
+    for (let i = 0; i < 120; i++) {
         const files = fs.readdirSync(downloadPath);
         // หาไฟล์ Excel (.xls, .xlsx) ที่ไม่ใช่ไฟล์ชั่วคราว (.crdownload) และไม่ใช่ไฟล์ที่เราเพิ่งเปลี่ยนชื่อไป (Report_*)
         downloadedFile = files.find(f => (f.endsWith('.xls') || f.endsWith('.xlsx')) && !f.endsWith('.crdownload') && !f.startsWith('Report_'));
@@ -23,9 +23,20 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
         throw new Error(`Download failed or timed out for ${newFileName}`);
     }
 
+    // รออีกนิดเพื่อให้มั่นใจว่าเขียนไฟล์เสร็จสมบูรณ์ 100%
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
     const oldPath = path.join(downloadPath, downloadedFile);
     const newPath = path.join(downloadPath, newFileName);
     
+    // ตรวจสอบขนาดไฟล์ก่อนเปลี่ยนชื่อ
+    const stats = fs.statSync(oldPath);
+    console.log(`   Original File: ${downloadedFile} (Size: ${stats.size} bytes)`);
+    
+    if (stats.size === 0) {
+        throw new Error(`Downloaded file ${downloadedFile} is empty (0 bytes)!`);
+    }
+
     // ลบไฟล์ปลายทางถ้ามีอยู่แล้ว
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     
@@ -53,7 +64,7 @@ function getTodayFormatted() {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Updated Step 2)...');
+    console.log('🚀 Starting DTC Automation (Direct File Attachment Mode)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -89,7 +100,7 @@ function getTodayFormatted() {
         console.log('✅ Login Success');
 
         // =================================================================
-        // STEP 2: REPORT 1 - Over Speed (Updated Code)
+        // STEP 2: REPORT 1 - Over Speed
         // =================================================================
         console.log('📊 Processing Report 1: Over Speed...');
         
@@ -115,7 +126,7 @@ function getTodayFormatted() {
             // Speed (Command 8)
             document.getElementById('speed_max').value = '55';
             
-            // Date Formula (แก้ไขให้ใช้เวลา 06:00 - 18:00 ตามที่รับค่ามา)
+            // Date Formula
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
             
@@ -123,10 +134,10 @@ function getTodayFormatted() {
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
 
-            // Options (Command 13)
+            // Options
             if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '1';
             
-            // --- Select Truck (UI.Vision Command 14) ---
+            // --- Select Truck ---
             var selectElement = document.getElementById('ddl_truck'); 
             var options = selectElement.options; 
             for (var i = 0; i < options.length; i++) { 
@@ -150,7 +161,6 @@ function getTodayFormatted() {
         console.log('   Waiting for Data Loading...');
         try {
             await page.waitForSelector('#btnexport', { visible: true, timeout: 300000 }); // รอสูงสุด 5 นาที
-            // รอเพิ่มอีกนิดเพื่อให้ข้อมูลโหลดสมบูรณ์จริงๆ หลังปุ่มขึ้น
             await new Promise(r => setTimeout(r, 5000)); 
         } catch(e) {
             console.warn('   ⚠️ Warning: Export button wait timed out');
@@ -159,7 +169,6 @@ function getTodayFormatted() {
 
         // Export & Download
         console.log('   Exporting...');
-        
         await page.evaluate(() => document.getElementById('btnexport').click());
         
         // ใช้ Helper Function เพื่อเปลี่ยนชื่อไฟล์
@@ -167,7 +176,7 @@ function getTodayFormatted() {
 
 
         // =================================================================
-        // STEP 3-6: Other Reports (Placeholder for Puppeteer Replay)
+        // STEP 3-6: Other Reports (Placeholder)
         // =================================================================
         // ... พื้นที่สำหรับวาง Code Report 2-5 ...
 
@@ -183,11 +192,21 @@ function getTodayFormatted() {
         // =================================================================
         console.log('📧 Step 8: Sending Email...');
         
+        // อ่านไฟล์ทั้งหมดที่มีในโฟลเดอร์ตอนนี้
         const allFiles = fs.readdirSync(downloadPath);
-        const attachments = allFiles.map(file => ({
-            filename: file,
-            path: path.join(downloadPath, file)
-        }));
+        
+        // กรองเฉพาะไฟล์ที่เราต้องการส่ง (ตัดไฟล์ระบบทิ้งถ้ามี)
+        const validFiles = allFiles.filter(file => file.endsWith('.xls') || file.endsWith('.xlsx') || file.endsWith('.pdf'));
+        
+        const attachments = validFiles.map(file => {
+            const filePath = path.join(downloadPath, file);
+            const stats = fs.statSync(filePath);
+            console.log(`   Attaching: ${file} (${stats.size} bytes)`);
+            return {
+                filename: file,
+                path: filePath
+            };
+        });
 
         if (attachments.length > 0) {
             const transporter = nodemailer.createTransport({
