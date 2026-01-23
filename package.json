@@ -1,0 +1,15 @@
+{
+  "name": "daily-dtc-5-report-day",
+  "version": "1.0.0",
+  "description": "Daily DTC 5 Report 06:00-18:00",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "puppeteer": "^23.0.0",
+    "nodemailer": "^6.9.7",
+    "exceljs": "^4.4.0",
+    "jsdom": "^24.0.0"
+  }
+}
