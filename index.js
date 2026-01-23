@@ -9,8 +9,10 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
 
+    // รอไฟล์สูงสุด 60 วินาที
     for (let i = 0; i < 60; i++) {
         const files = fs.readdirSync(downloadPath);
+        // หาไฟล์ Excel (.xls, .xlsx) ที่ไม่ใช่ไฟล์ชั่วคราว (.crdownload) และไม่ใช่ไฟล์ที่เราเพิ่งเปลี่ยนชื่อไป (Report_*)
         downloadedFile = files.find(f => (f.endsWith('.xls') || f.endsWith('.xlsx')) && !f.endsWith('.crdownload') && !f.startsWith('Report_'));
         
         if (downloadedFile) break;
@@ -24,6 +26,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
     const oldPath = path.join(downloadPath, downloadedFile);
     const newPath = path.join(downloadPath, newFileName);
     
+    // ลบไฟล์ปลายทางถ้ามีอยู่แล้ว
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     
     fs.renameSync(oldPath, newPath);
@@ -50,7 +53,7 @@ function getTodayFormatted() {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Fixed Login Logic)...');
+    console.log('🚀 Starting DTC Automation (Updated Step 2)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -58,7 +61,6 @@ function getTodayFormatted() {
     });
 
     const page = await browser.newPage();
-    // Timeout 5 นาที ตามไฟล์ตัวอย่าง
     page.setDefaultNavigationTimeout(300000);
     page.setDefaultTimeout(300000);
     
@@ -70,7 +72,7 @@ function getTodayFormatted() {
 
     try {
         // =================================================================
-        // STEP 1: LOGIN (แก้ไขตามไฟล์แนบ)
+        // STEP 1: LOGIN
         // =================================================================
         console.log('1️⃣ Step 1: Login...');
         await page.goto('https://gps.dtc.co.th/ultimate/index.php', { waitUntil: 'domcontentloaded' });
@@ -80,7 +82,6 @@ function getTodayFormatted() {
         await page.type('#txtpass', DTC_PASSWORD);
         
         console.log('   Clicking Login...');
-        // ใช้ logic เดียวกับไฟล์ตัวอย่าง: คลิกผ่าน DOM และรอจนกว่ากล่อง user จะหายไป
         await Promise.all([
             page.evaluate(() => document.getElementById('btnLogin').click()),
             page.waitForFunction(() => !document.querySelector('#txtname'), { timeout: 60000 })
@@ -88,28 +89,33 @@ function getTodayFormatted() {
         console.log('✅ Login Success');
 
         // =================================================================
-        // STEP 2: REPORT 1 - Over Speed (Updated from attached file)
+        // STEP 2: REPORT 1 - Over Speed (Updated Code)
         // =================================================================
         console.log('📊 Processing Report 1: Over Speed...');
         
-        // ใช้ URL จากไฟล์แนบ indexJS.txt (Report_03.php)
+        // 2️⃣ Step 2: Go to Report Page...
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
         
-        // รอ Selector สำคัญ
-        await page.waitForSelector('#speed_max', { visible: true, timeout: 60000 });
+        // 3️⃣ Step 3: Fill Form
+        console.log('   Step 3: Fill Form...');
+        
+        await page.waitForSelector('#speed_max', { visible: true });
         await page.waitForSelector('#ddl_truck', { visible: true });
+        
+        // รอสักนิดเพื่อให้ตัวเลือกใน Dropdown โหลดมาครบ
+        await new Promise(r => setTimeout(r, 2000));
 
-        // คำนวณเวลา 06:00 - 18:00 ของวันนี้
+        // คำนวณเวลา 06:00 - 18:00 ของวันนี้ (แทนที่สูตรเดิมใน Snippet)
         const todayStr = getTodayFormatted();
         const startDateTime = `${todayStr} 06:00`;
         const endDateTime = `${todayStr} 18:00`;
-        console.log(`   Setting parameters (Speed: 55, Time: ${startDateTime} - ${endDateTime})...`);
+        console.log(`   Setting Time: ${startDateTime} to ${endDateTime}`);
 
         await page.evaluate((start, end) => {
-            // Speed (Command 8 from attached file)
+            // Speed (Command 8)
             document.getElementById('speed_max').value = '55';
             
-            // Date (Fixed to 06:00 - 18:00)
+            // Date Formula (แก้ไขให้ใช้เวลา 06:00 - 18:00 ตามที่รับค่ามา)
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
             
@@ -117,10 +123,10 @@ function getTodayFormatted() {
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
 
-            // Minute (Command 13)
+            // Options (Command 13)
             if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '1';
             
-            // Select Truck "ทั้งหมด" (Command 14 from attached file)
+            // --- Select Truck (UI.Vision Command 14) ---
             var selectElement = document.getElementById('ddl_truck'); 
             var options = selectElement.options; 
             for (var i = 0; i < options.length; i++) { 
@@ -133,28 +139,33 @@ function getTodayFormatted() {
             selectElement.dispatchEvent(event);
         }, startDateTime, endDateTime);
 
-        // Search Logic from attached file
-        console.log('   Searching Report 1...');
+        // 4️⃣ Step 4: Search
+        console.log('   Step 4: Search...');
         await page.evaluate(() => {
             if(typeof sertch_data === 'function') sertch_data();
-            else {
-                const btn = document.querySelector("span[onclick='sertch_data();']");
-                if(btn) btn.click();
-            }
+            else document.querySelector("span[onclick='sertch_data();']").click();
         });
 
-        // Wait for Export button (Logic from attached file)
-        console.log('   Waiting for data to load...');
+        // 5️⃣ Step 5: Wait 120s (Hard Wait)
+        // หมายเหตุ: ปรับลดลงเหลือ 60s ถ้าข้อมูลไม่เยอะมาก หรือใช้ waitForSelector ตามด้านล่างจะเร็วกว่า
+        console.log('   Step 5: Waiting for Data Loading...');
         try {
-            await page.waitForSelector('#btnexport', { visible: true, timeout: 300000 }); // 5 mins max
+            await page.waitForSelector('#btnexport', { visible: true, timeout: 300000 }); // รอสูงสุด 5 นาที
+            // รอเพิ่มอีกนิดเพื่อให้ข้อมูลโหลดสมบูรณ์จริงๆ หลังปุ่มขึ้น
+            await new Promise(r => setTimeout(r, 5000)); 
         } catch(e) {
-            console.warn('   ⚠️ Warning: Export button wait timed out, attempting to click anyway...');
+            console.warn('   ⚠️ Warning: Export button wait timed out');
         }
+        console.log('   ✅ Data Loaded.');
 
-        console.log('   Exporting Report 1...');
+        // 6️⃣ Step 6: Export & Download
+        console.log('   Step 6: Exporting...');
+        
         await page.evaluate(() => document.getElementById('btnexport').click());
         
+        // ใช้ Helper Function แทน Loop ใน Snippet เพื่อเปลี่ยนชื่อไฟล์และจัดการ Error
         await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
+
 
         // =================================================================
         // STEP 3-6: Other Reports (Placeholder for Puppeteer Replay)
