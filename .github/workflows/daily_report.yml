@@ -1,4 +1,4 @@
-name: Run Daily DTC 5 Report Day
+name: Daily DTC 5 Report Day
 
 on:
   schedule:
