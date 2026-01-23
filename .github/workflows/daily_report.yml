@@ -38,3 +38,4 @@ jobs:
         with:
           name: downloaded-reports
           path: downloads/
+          retention-days: 1
