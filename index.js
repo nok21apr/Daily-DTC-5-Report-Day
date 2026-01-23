@@ -67,16 +67,17 @@ function getTodayFormatted() {
 
     try {
         // Step 1: Login
-        console.log('🔑 Step 1: Login...');
-        await page.goto('https://gps.dtc.co.th/ultimate/index.php', { waitUntil: 'networkidle2' });
-        await page.waitForSelector('#txtname', { visible: true });
+        console.log('1️⃣ Step 1: Login...');
+        await page.goto('https://gps.dtc.co.th/ultimate/index.php', { waitUntil: 'domcontentloaded' });
+        await page.waitForSelector('#txtname', { visible: true, timeout: 60000 });
         await page.type('#txtname', DTC_USERNAME);
         await page.type('#txtpass', DTC_PASSWORD);
         await Promise.all([
-            page.click('#btnLogin'),
-            page.waitForNavigation({ waitUntil: 'networkidle2' })
+            page.evaluate(() => document.getElementById('btnLogin').click()),
+            page.waitForFunction(() => !document.querySelector('#txtname'), { timeout: 60000 })
         ]);
-        console.log('   Login Success.');
+        console.log('✅ Login Success');
+
 
         // Step 2: Report 1 (Over Speed)
         console.log('📊 Processing Report 1: Over Speed...');
