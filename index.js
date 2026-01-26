@@ -13,12 +13,11 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
     for (let i = 0; i < 120; i++) {
         const files = fs.readdirSync(downloadPath);
         
-        // LOGIC ใหม่: หาไฟล์ .xls/.xlsx ที่ไม่ใช่ไฟล์ชั่วคราว (.crdownload) 
-        // และ **ต้องไม่มี** Prefix "DTC_Completed_" (เพื่อไม่ให้ซ้ำกับไฟล์ที่เราเปลี่ยนชื่อไปแล้ว)
+        // LOGIC: หาไฟล์ .xls/.xlsx ที่ไม่ใช่ไฟล์ชั่วคราว และไม่มี Prefix "DTC_Completed_"
         downloadedFile = files.find(f => 
             (f.endsWith('.xls') || f.endsWith('.xlsx')) && 
             !f.endsWith('.crdownload') && 
-            !f.startsWith('DTC_Completed_') // จุดสำคัญ: กรองไฟล์ที่ทำเสร็จแล้วออกไป
+            !f.startsWith('DTC_Completed_')
         );
         
         if (downloadedFile) break;
@@ -29,11 +28,10 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
         throw new Error(`Download failed or timed out for ${newFileName}`);
     }
 
-    // รออีกนิดเพื่อให้เขียนไฟล์เสร็จสมบูรณ์
+    // รอให้ไฟล์เขียนเสร็จสมบูรณ์
     await new Promise(resolve => setTimeout(resolve, 3000));
 
     const oldPath = path.join(downloadPath, downloadedFile);
-    // เติม Prefix "DTC_Completed_" นำหน้าชื่อไฟล์ใหม่เสมอ เพื่อให้ Logic การค้นหาข้างบนทำงานถูกต้อง
     const finalFileName = `DTC_Completed_${newFileName}`;
     const newPath = path.join(downloadPath, finalFileName);
     
@@ -45,7 +43,6 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
         throw new Error(`Downloaded file ${downloadedFile} is empty!`);
     }
 
-    // ลบไฟล์ปลายทางถ้ามีซ้ำ
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     
     fs.renameSync(oldPath, newPath);
@@ -72,7 +69,7 @@ function getTodayFormatted() {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (5 Reports Structure)...');
+    console.log('🚀 Starting DTC Automation (Updated Reports 3, 4, 5 Conditions)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -80,9 +77,9 @@ function getTodayFormatted() {
     });
 
     const page = await browser.newPage();
-    // Timeout รวม 20 นาที (เผื่อ 5 รายงาน)
-    page.setDefaultNavigationTimeout(1200000);
-    page.setDefaultTimeout(1200000);
+    // Timeout รวม 30 นาที
+    page.setDefaultNavigationTimeout(1800000);
+    page.setDefaultTimeout(1800000);
     
     const client = await page.target().createCDPSession();
     await client.send('Page.setDownloadBehavior', { behavior: 'allow', downloadPath: downloadPath });
@@ -109,7 +106,7 @@ function getTodayFormatted() {
         const todayStr = getTodayFormatted();
         const startDateTime = `${todayStr} 06:00`;
         const endDateTime = `${todayStr} 18:00`;
-        console.log(`🕒 Time Settings: ${startDateTime} to ${endDateTime}`);
+        console.log(`🕒 Global Time Settings: ${startDateTime} to ${endDateTime}`);
 
         // =================================================================
         // STEP 2: REPORT 1 - Over Speed
@@ -129,6 +126,7 @@ function getTodayFormatted() {
             document.getElementById('date10').dispatchEvent(new Event('change'));
             if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '1';
             
+            // เลือกทะเบียน "ทั้งหมด"
             var selectElement = document.getElementById('ddl_truck'); 
             var options = selectElement.options; 
             for (var i = 0; i < options.length; i++) { 
@@ -150,7 +148,6 @@ function getTodayFormatted() {
         console.log('   Exporting Report 1...');
         await page.evaluate(() => document.getElementById('btnexport').click());
         
-        // บันทึกไฟล์ที่ 1
         await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
 
 
@@ -161,13 +158,26 @@ function getTodayFormatted() {
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_02.php', { waitUntil: 'domcontentloaded' });
         
         await page.waitForSelector('#date9', { visible: true });
-        await page.waitForSelector('#date10', { visible: true });
-        
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 2000));
+
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
+            
+            if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '10';
+
+            // เลือกทะเบียน "ทั้งหมด"
+            var selectElement = document.getElementById('ddl_truck'); 
+            if (selectElement) {
+                var options = selectElement.options; 
+                for (var i = 0; i < options.length; i++) { 
+                    if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+                } 
+                selectElement.dispatchEvent(new Event('change', { bubbles: true }));
+            }
         }, startDateTime, endDateTime);
 
         console.log('   Searching Report 2...');
@@ -180,39 +190,171 @@ function getTodayFormatted() {
         console.log('   Exporting Report 2...');
         await page.evaluate(() => document.getElementById('btnexport').click());
         
-        // บันทึกไฟล์ที่ 2
         await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
 
 
         // =================================================================
-        // STEP 4: REPORT 3 (รอ Code)
+        // STEP 4: REPORT 3 - Sudden Brake (เบรกกะทันหัน)
         // =================================================================
-        console.log('📊 Processing Report 3...');
-        // TODO: วาง Code Puppeteer สำหรับ Report 3 ตรงนี้
-        // ...
-        // ...
-        // เมื่อวาง Code เสร็จ ให้ Uncomment บรรทัดล่างนี้เพื่อให้ระบบรอดาวน์โหลด
-        // await waitForDownloadAndRename(downloadPath, 'Report3_Name.xls');
+        console.log('📊 Processing Report 3: Sudden Brake...');
+        await page.goto('https://gps.dtc.co.th/ultimate/Report/report_hd.php', { waitUntil: 'domcontentloaded' });
+        
+        await page.waitForSelector('#date9', { visible: true });
+        await page.waitForSelector('#ddl_truck', { visible: true }); // รอ Dropdown
+        await new Promise(r => setTimeout(r, 2000));
+
+        await page.evaluate((start, end) => {
+            document.getElementById('date9').value = start;
+            document.getElementById('date10').value = end;
+            document.getElementById('date9').dispatchEvent(new Event('change'));
+            document.getElementById('date10').dispatchEvent(new Event('change'));
+
+            // เลือกทะเบียน "ทั้งหมด" (Updated)
+            var selectElement = document.getElementById('ddl_truck'); 
+            if (selectElement) {
+                var options = selectElement.options; 
+                for (var i = 0; i < options.length; i++) { 
+                    if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+                } 
+                selectElement.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, startDateTime, endDateTime);
+
+        console.log('   Searching Report 3...');
+        await page.click('td:nth-of-type(6) > span');
+
+        console.log('   ⏳ Waiting 2 mins...');
+        await new Promise(resolve => setTimeout(resolve, 120000));
+
+        console.log('   Exporting Report 3...');
+        await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const excelBtn = buttons.find(b => b.innerText.includes('Excel') || b.getAttribute('title') === 'Excel' || b.getAttribute('aria-label') === 'Excel');
+            if (excelBtn) excelBtn.click();
+            else {
+                const fallback = document.querySelector('#table button:nth-of-type(3)');
+                if (fallback) fallback.click();
+            }
+        });
+        
+        await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
 
         // =================================================================
-        // STEP 5: REPORT 4 (รอ Code)
+        // STEP 5: REPORT 4 - Harsh Start (ออกตัวกระชาก)
         // =================================================================
-        console.log('📊 Processing Report 4...');
-        // TODO: วาง Code Puppeteer สำหรับ Report 4 ตรงนี้
-        // ...
-        // ...
-        // await waitForDownloadAndRename(downloadPath, 'Report4_Name.xls');
+        console.log('📊 Processing Report 4: Harsh Start...');
+        await page.goto('https://gps.dtc.co.th/ultimate/Report/report_ha.php', { waitUntil: 'domcontentloaded' });
+        
+        await page.waitForSelector('#date9', { visible: true });
+        await page.waitForSelector('#ddl_truck', { visible: true }); // รอ Dropdown
+        await new Promise(r => setTimeout(r, 2000));
+
+        await page.evaluate((start, end) => {
+            document.getElementById('date9').value = start;
+            document.getElementById('date10').value = end;
+            document.getElementById('date9').dispatchEvent(new Event('change'));
+            document.getElementById('date10').dispatchEvent(new Event('change'));
+
+            // เลือกทะเบียน "ทั้งหมด" (Updated)
+            var selectElement = document.getElementById('ddl_truck'); 
+            if (selectElement) {
+                var options = selectElement.options; 
+                for (var i = 0; i < options.length; i++) { 
+                    if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+                } 
+                selectElement.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, startDateTime, endDateTime);
+
+        console.log('   Searching Report 4...');
+        await page.click('td:nth-of-type(6) > span');
+
+        console.log('   ⏳ Waiting 2 mins...');
+        await new Promise(resolve => setTimeout(resolve, 120000));
+
+        console.log('   Exporting Report 4...');
+        await page.evaluate(() => {
+            const buttons = Array.from(document.querySelectorAll('button'));
+            const excelBtn = buttons.find(b => b.innerText.includes('Excel') || b.getAttribute('title') === 'Excel' || b.getAttribute('aria-label') === 'Excel');
+            if (excelBtn) excelBtn.click();
+            else {
+                const fallback = document.querySelector('#table button:nth-of-type(3)');
+                if (fallback) fallback.click();
+            }
+        });
+        
+        await waitForDownloadAndRename(downloadPath, 'Report4_HarshStart.xls');
 
 
         // =================================================================
-        // STEP 6: REPORT 5 (รอ Code)
+        // STEP 6: REPORT 5 - Forbidden Parking (พื้นที่ห้ามจอด/เข้าสถานี)
         // =================================================================
-        console.log('📊 Processing Report 5...');
-        // TODO: วาง Code Puppeteer สำหรับ Report 5 ตรงนี้
-        // ...
-        // ...
-        // await waitForDownloadAndRename(downloadPath, 'Report5_Name.xls');
+        console.log('📊 Processing Report 5: Forbidden Parking...');
+        await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_Instation.php', { waitUntil: 'domcontentloaded' });
+        
+        await page.waitForSelector('#date9', { visible: true });
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 2000));
+
+        await page.evaluate((start, end) => {
+            // 1. วันที่
+            document.getElementById('date9').value = start;
+            document.getElementById('date10').value = end;
+            document.getElementById('date9').dispatchEvent(new Event('change'));
+            document.getElementById('date10').dispatchEvent(new Event('change'));
+
+            // 2. เลือกทะเบียน "ทั้งหมด" (Updated)
+            var truckSelect = document.getElementById('ddl_truck'); 
+            if (truckSelect) {
+                for (var i = 0; i < truckSelect.options.length; i++) { 
+                    if (truckSelect.options[i].text.includes('ทั้งหมด')) { truckSelect.value = truckSelect.options[i].value; break; } 
+                } 
+                truckSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            // 3. เลือกประเภทสถานี "พื้นที่ห้ามเข้า" (Updated)
+            // ค้นหา Select Element ทุกตัว เพื่อหาตัวที่มี Option นี้
+            var allSelects = document.getElementsByTagName('select');
+            for(var s of allSelects) {
+                for(var i=0; i<s.options.length; i++) {
+                    if(s.options[i].text.includes('พื้นที่ห้ามเข้า')) {
+                        s.value = s.options[i].value;
+                        s.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
+                    }
+                }
+            }
+        }, startDateTime, endDateTime);
+
+        // รอสักครู่เพื่อให้ Dropdown สถานีโหลดใหม่ตามประเภท
+        await new Promise(r => setTimeout(r, 2000));
+
+        await page.evaluate(() => {
+            // 4. เลือกสถานี "สถานีทั้งหมด" (Updated)
+            var allSelects = document.getElementsByTagName('select');
+            for(var s of allSelects) {
+                for(var i=0; i<s.options.length; i++) {
+                    if(s.options[i].text.includes('สถานีทั้งหมด')) {
+                        s.value = s.options[i].value;
+                        s.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
+                    }
+                }
+            }
+        });
+
+        console.log('   Searching Report 5...');
+        await page.click('td:nth-of-type(7) > span');
+
+        console.log('   ⏳ Waiting 5 mins...');
+        await new Promise(resolve => setTimeout(resolve, 300000));
+
+        try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
+        console.log('   Exporting Report 5...');
+        await page.evaluate(() => document.getElementById('btnexport').click());
+        
+        await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
 
         // =================================================================
@@ -228,7 +370,6 @@ function getTodayFormatted() {
         
         const allFiles = fs.readdirSync(downloadPath);
         
-        // กรองเอาเฉพาะไฟล์ที่ผ่านการ Rename แล้ว (DTC_Completed_...) หรือ PDF
         const filesToSend = allFiles.filter(file => 
             file.startsWith('DTC_Completed_') || file.endsWith('.pdf')
         );
@@ -256,11 +397,7 @@ function getTodayFormatted() {
             console.warn('⚠️ No "DTC_Completed_" files found to send!');
         }
 
-        // =================================================================
-        // STEP 9: Cleanup
-        // =================================================================
         console.log('🧹 Cleanup...');
-        // (Optional) ลบไฟล์หลังส่ง ถ้าต้องการเก็บไว้ดู Debug ให้ Comment บรรทัดล่างทิ้ง
         // fs.rmSync(downloadPath, { recursive: true, force: true });
         console.log('   ✅ Cleanup Complete.');
 
