@@ -164,7 +164,7 @@ function zipExcelFiles(sourceDir, outPath, filesToZip) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Optimized V2)...');
+    console.log('🚀 Starting DTC Automation (Report 1 Optimized)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -200,7 +200,7 @@ function zipExcelFiles(sourceDir, outPath, filesToZip) {
         console.log(`🕒 Time Settings: ${startDateTime} to ${endDateTime}`);
 
         // =================================================================
-        // REPORT 1: Over Speed
+        // REPORT 1: Over Speed (Optimized Wait)
         // =================================================================
         console.log('📊 Processing Report 1: Over Speed...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
@@ -222,23 +222,30 @@ function zipExcelFiles(sourceDir, outPath, filesToZip) {
             }
         }, startDateTime, endDateTime);
 
+        // กด Search
+        console.log('   Searching Report 1...');
         await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
         
-        // Smart Wait Strategy: Check for Excel button periodically
-        console.log('   Waiting for data...');
+        // --- Smart Wait Strategy for Report 1 ---
+        console.log('   Waiting for Report 1 data (Smart Wait)...');
+        
+        // 1. รอจนกว่าปุ่ม Export จะโผล่มา (แสดงว่าข้อมูลโหลดเสร็จแล้ว) หรือ Timeout ที่ 3 นาที
         try {
-            await page.waitForFunction(() => {
-                const btns = Array.from(document.querySelectorAll('button'));
-                return btns.some(b => b.innerText.includes('Excel') || b.id === 'btnexport');
-            }, { timeout: 300000 }); // Max wait 5 mins
-        } catch(e) {}
+            await page.waitForSelector('#btnexport', { visible: true, timeout: 180000 });
+            console.log('   ✅ Data Loaded (Export button visible).');
+        } catch(e) {
+            console.warn('   ⚠️ Wait for export button timed out, trying to click anyway...');
+        }
 
+        // 2. กดปุ่ม Export (แบบ Safe Click)
         await page.evaluate(() => {
-            const btn = document.getElementById('btnexport') || document.querySelector('button[title="Excel"]');
+            const btn = document.getElementById('btnexport');
             if(btn) btn.click();
+            else console.error('Export button not found!');
         });
         
-        // Smart File Wait (Max 3 mins)
+        // 3. รอไฟล์โหลด (Smart Wait File)
+        // ถ้าไฟล์มาเร็ว ก็จบเร็ว ถ้าช้าก็รอสูงสุด 3 นาที
         const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls', 180000);
 
         // =================================================================
