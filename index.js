@@ -111,7 +111,7 @@ function extractDataFromReport(filePath, reportType) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Report 4: Type "ทั้งหมด" Fix)...');
+    console.log('🚀 Starting DTC Automation (Report 4 Fixed: Programmatic Select)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -214,7 +214,7 @@ function extractDataFromReport(filePath, reportType) {
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // =================================================================
-        // REPORT 4: Harsh Start (FIXED: Type "ทั้งหมด" in #s2id_autogen2)
+        // REPORT 4: Harsh Start (FIXED: Programmatic Selection)
         // =================================================================
         console.log('📊 Processing Report 4: Harsh Start...');
         try {
@@ -226,55 +226,55 @@ function extractDataFromReport(filePath, reportType) {
             // รอวันที่
             await page.waitForSelector('#date9', { visible: true, timeout: 60000 });
 
-            console.log('   Setting Report 4 Conditions (ID: s2id_ddl_truck)...');
+            // รอให้ Dropdown รถโหลดข้อมูลเสร็จ (สำคัญมาก: แก้ปัญหา NO MATCH)
+            // รอจนกว่าจะมี options มากกว่า 1 (ปกติจะมี "กรุณาเลือก" และรถต่างๆ)
+            console.log('   Waiting for truck list to load...');
+            await page.waitForFunction(() => {
+                const select = document.getElementById('ddl_truck');
+                return select && select.options.length > 1;
+            }, { timeout: 60000 });
+
+            console.log('   Setting Report 4 Conditions (Programmatic)...');
             
-            // 1. ตั้งวันที่
+            // ใช้ evaluate ตั้งค่าโดยตรง ไม่ต้องพิมพ์ ไม่ต้องกด UI
             await page.evaluate((start, end) => {
+                // 1. ตั้งวันที่
                 document.getElementById('date9').value = start;
                 document.getElementById('date10').value = end;
                 document.getElementById('date9').dispatchEvent(new Event('change'));
                 document.getElementById('date10').dispatchEvent(new Event('change'));
-            }, startDateTime, endDateTime);
 
-            // 2. เลือกรถ (เปิด Dropdown -> หา input #s2id_autogen2 -> พิมพ์ "ทั้งหมด" -> Enter)
-            const select2Container = await page.$('#s2id_ddl_truck');
-            if (select2Container) {
-                console.log('   Found #s2id_ddl_truck, interacting with Select2...');
-                await select2Container.click(); // เปิด Dropdown
-                
-                try {
-                    // รอ animation เปิด Dropdown และรอ input โผล่
-                    // ใช้ ID #s2id_autogen2 ตาม Recording
-                    const searchInputSelector = '#s2id_autogen2';
-                    await page.waitForSelector(searchInputSelector, { visible: true, timeout: 5000 });
-                    
-                    console.log('   Found Select2 Search Input (#s2id_autogen2), typing "ทั้งหมด"...');
-                    await page.type(searchInputSelector, 'ทั้งหมด');
-                    await new Promise(r => setTimeout(r, 1000));
-                    await page.keyboard.press('Enter');
-                    console.log('   Select2: Typed "ทั้งหมด" and pressed Enter.');
-                } catch (e) {
-                    console.warn('   ⚠️ Select2 interaction failed:', e.message);
-                    // Fallback: ถ้าหา input ไม่เจอ ลองกด ArrowDown + Enter
-                    console.log('   Fallback: Trying ArrowDown + Enter...');
-                    await page.keyboard.press('ArrowDown');
-                    await page.keyboard.press('Enter');
-                }
-            } else {
-                console.log('   #s2id_ddl_truck not found, trying standard #ddl_truck...');
-                await page.evaluate(() => {
-                    const select = document.getElementById('ddl_truck');
-                    if (select) {
-                        select.selectedIndex = 0;
-                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                // 2. เลือกรถ "ทั้งหมด" ผ่าน DOM โดยตรง (แก้ปัญหา Select2 พิมพ์ไม่เจอ)
+                const select = document.getElementById('ddl_truck');
+                if (select) {
+                    let found = false;
+                    for (let i = 0; i < select.options.length; i++) {
+                        // หาคำว่า "ทั้งหมด" หรือ "All" หรือเลือกอันแรกถ้าไม่ใช่ placeholder
+                        if (select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
+                            select.selectedIndex = i;
+                            found = true;
+                            break;
+                        }
                     }
-                });
-            }
+                    if (!found && select.options.length > 0) {
+                        // Fallback: เลือกตัวแรกสุด (index 0 หรือ 1 แล้วแต่โครงสร้าง)
+                        select.selectedIndex = 0;
+                    }
+                    
+                    // แจ้งเตือน Event ให้ระบบรู้ว่าค่าเปลี่ยนแล้ว (สำคัญสำหรับ Select2)
+                    select.dispatchEvent(new Event('change', { bubbles: true }));
+                    
+                    // ถ้าเว็บใช้ jQuery/Select2 เราอาจต้องกระตุ้นมัน (Optional but helpful)
+                    if (typeof $ !== 'undefined' && $(select).data('select2')) {
+                        $(select).trigger('change'); 
+                    }
+                }
+            }, startDateTime, endDateTime);
 
             // Debug 2
             await page.screenshot({ path: path.join(downloadPath, 'report4_02_before_search.png') });
 
-            // 3. กดค้นหา
+            // 3. กดค้นหา (ใช้การเรียก Function โดยตรง)
             console.log('   Clicking Search Report 4...');
             await page.evaluate(() => {
                 if (typeof sertch_data === 'function') {
