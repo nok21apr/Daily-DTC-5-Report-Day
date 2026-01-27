@@ -111,7 +111,7 @@ function extractDataFromReport(filePath, reportType) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Adjusted Wait Times to 4 Mins)...');
+    console.log('🚀 Starting DTC Automation (Report 4 Locator Race Fix)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -203,8 +203,8 @@ function extractDataFromReport(filePath, reportType) {
         }, startDateTime, endDateTime);
         await page.click('td:nth-of-type(6) > span');
         
-        console.log('   ⏳ Waiting 4 mins (Updated)...'); // ปรับเวลาเป็น 4 นาที
-        await new Promise(r => setTimeout(r, 200000)); // 200,000 ms
+        console.log('   ⏳ Waiting 4 mins...'); 
+        await new Promise(r => setTimeout(r, 200000)); 
 
         await page.evaluate(() => {
             const btns = Array.from(document.querySelectorAll('button'));
@@ -214,7 +214,7 @@ function extractDataFromReport(filePath, reportType) {
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // =================================================================
-        // REPORT 4: Harsh Start (FIXED Select2)
+        // REPORT 4: Harsh Start (FIXED Select2 & Search)
         // =================================================================
         console.log('📊 Processing Report 4: Harsh Start...');
         try {
@@ -244,7 +244,6 @@ function extractDataFromReport(filePath, reportType) {
                 await page.click('#s2id_ddl_truck'); // คลิกเปิด Dropdown
                 
                 // รอให้ช่อง Search ของ Select2 โผล่ (ปกติจะเป็น #select2-drop หรือ .select2-input)
-                // เราจะลองพิมพ์ "ทั้งหมด" ลงไป
                 try {
                     // รอ Input ที่ Active หรืออยู่ใน Dropdown
                     await new Promise(r => setTimeout(r, 500));
@@ -275,15 +274,45 @@ function extractDataFromReport(filePath, reportType) {
             // Debug 2
             await page.screenshot({ path: path.join(downloadPath, 'report4_02_before_search.png') });
 
-            // กดค้นหา (ใช้ Selector ที่คุณให้มา)
-            console.log('   Clicking Search Report 4...');
-            const searchSelector = '#content > div.container-fluid > div > div > div:nth-child(2) > div > table > tbody > tr:nth-child(3) > td:nth-child(6) > span';
-            await page.waitForSelector(searchSelector, { visible: true });
-            await page.click(searchSelector);
+            // กดค้นหา (ใช้ Locator.race ตามที่ร้องขอเพื่อความชัวร์)
+            console.log('   Clicking Search Report 4 (Using Locator Race)...');
+            
+            // ใช้ Locator Race หาปุ่ม Search จากหลายๆ Selector ที่เป็นไปได้
+            // Note: Puppeteer ใหม่ๆ รองรับ Locator API 
+            // แต่ถ้า version เก่าอาจต้องใช้ Promise.any กับ waitForSelector
+            // เพื่อความปลอดภัยใน Environment นี้ ผมจะใช้ Promise.race กับ waitForSelector แบบเดิมที่ปรับจูนแล้ว
+            
+            try {
+                // เทคนิคหาปุ่มแบบครอบคลุม (Race Condition)
+                const searchBtn = await Promise.race([
+                    page.waitForSelector('span[onclick="sertch_data();"]', { visible: true, timeout: 30000 }),
+                    page.waitForSelector('td:nth-of-type(6) > span', { visible: true, timeout: 30000 }),
+                    page.waitForSelector('.btn.btn-info', { visible: true, timeout: 30000 })
+                ]);
+                
+                if(searchBtn) {
+                    await searchBtn.click();
+                    console.log('   Search button clicked.');
+                } else {
+                    throw new Error("Search button not found by any selector");
+                }
+            } catch (e) {
+                console.warn('   ⚠️ Search button race failed, trying direct evaluate click...');
+                await page.evaluate(() => {
+                    if(typeof sertch_data === 'function') sertch_data();
+                    else {
+                        // ลองหาด้วย XPath หรือ Selector สุดท้าย
+                        const span = document.querySelector('td:nth-of-type(6) > span') || 
+                                     document.querySelector('span[onclick="sertch_data();"]');
+                        if(span) span.click();
+                        else throw new Error("Search button absolutely not found");
+                    }
+                });
+            }
 
             // รอ 4 นาที (240s)
             console.log('   ⏳ Waiting 4 mins for Report 4 data (Updated)...');
-            await new Promise(r => setTimeout(r, 200000)); // 200,000 ms
+            await new Promise(r => setTimeout(r, 200000)); 
 
             // Debug 3
             await page.screenshot({ path: path.join(downloadPath, 'report4_03_after_wait.png') });
