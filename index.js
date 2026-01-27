@@ -111,7 +111,7 @@ function extractDataFromReport(filePath, reportType) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Report 4 Direct Function Call)...');
+    console.log('🚀 Starting DTC Automation (Report 4: Arrow Key Select)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -203,8 +203,8 @@ function extractDataFromReport(filePath, reportType) {
         }, startDateTime, endDateTime);
         await page.click('td:nth-of-type(6) > span');
         
-        console.log('   ⏳ Waiting 4 mins...'); 
-        await new Promise(r => setTimeout(r, 200000)); 
+        console.log('   ⏳ Waiting 3 mins...'); 
+        await new Promise(r => setTimeout(r, 180000)); 
 
         await page.evaluate(() => {
             const btns = Array.from(document.querySelectorAll('button'));
@@ -214,7 +214,7 @@ function extractDataFromReport(filePath, reportType) {
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // =================================================================
-        // REPORT 4: Harsh Start (FIXED: Direct Function Call + Wait Log)
+        // REPORT 4: Harsh Start (FIXED: Arrow Key Select)
         // =================================================================
         console.log('📊 Processing Report 4: Harsh Start...');
         try {
@@ -236,17 +236,20 @@ function extractDataFromReport(filePath, reportType) {
                 document.getElementById('date10').dispatchEvent(new Event('change'));
             }, startDateTime, endDateTime);
 
-            // 2. เลือกรถ
+            // 2. เลือกรถ (ใช้ ArrowDown + Enter)
             const select2Exists = await page.$('#s2id_ddl_truck');
             if (select2Exists) {
                 console.log('   Found #s2id_ddl_truck, interacting with Select2...');
                 await page.click('#s2id_ddl_truck');
                 try {
-                    await new Promise(r => setTimeout(r, 500));
-                    await page.keyboard.type('ทั้งหมด');
+                    // รอ Dropdown เปิด
                     await new Promise(r => setTimeout(r, 1000));
+                    // กดลูกศรลง
+                    await page.keyboard.press('ArrowDown');
+                    await new Promise(r => setTimeout(r, 500));
+                    // กด Enter
                     await page.keyboard.press('Enter');
-                    console.log('   Select2: Typed "ทั้งหมด" and pressed Enter.');
+                    console.log('   Select2: Pressed ArrowDown + Enter.');
                 } catch (e) {
                     console.warn('   ⚠️ Select2 interaction failed, trying default select fallback...');
                 }
@@ -255,12 +258,8 @@ function extractDataFromReport(filePath, reportType) {
                 await page.evaluate(() => {
                     const select = document.getElementById('ddl_truck');
                     if (select) {
-                        for (let opt of select.options) {
-                            if (opt.text.includes('ทั้งหมด')) {
-                                select.value = opt.value;
-                                break;
-                            }
-                        }
+                        // เลือก Option แรกสุด (ปกติคือ "ทั้งหมด")
+                        select.selectedIndex = 0;
                         select.dispatchEvent(new Event('change', { bubbles: true }));
                     }
                 });
@@ -283,8 +282,8 @@ function extractDataFromReport(filePath, reportType) {
             });
 
             // รอ 4 นาที (240s) พร้อม Log ทุก 1 นาที
-            console.log('   ⏳ Waiting 4 mins for Report 4 data...');
-            for (let i = 1; i <= 4; i++) {
+            console.log('   ⏳ Waiting 3 mins for Report 4 data...');
+            for (let i = 1; i <= 3; i++) {
                 await new Promise(r => setTimeout(r, 60000)); // รอ 1 นาที
                 console.log(`      ... Passed ${i} minute(s)`);
             }
