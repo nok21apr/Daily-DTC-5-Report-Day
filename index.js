@@ -111,7 +111,7 @@ function extractDataFromReport(filePath, reportType) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Report 4 Search Fix)...');
+    console.log('🚀 Starting DTC Automation (Report 4: Type "ทั้งหมด" Fix)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -214,7 +214,7 @@ function extractDataFromReport(filePath, reportType) {
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // =================================================================
-        // REPORT 4: Harsh Start (FIXED: Search Button)
+        // REPORT 4: Harsh Start (FIXED: Type "ทั้งหมด" in #s2id_autogen2)
         // =================================================================
         console.log('📊 Processing Report 4: Harsh Start...');
         try {
@@ -236,19 +236,29 @@ function extractDataFromReport(filePath, reportType) {
                 document.getElementById('date10').dispatchEvent(new Event('change'));
             }, startDateTime, endDateTime);
 
-            // 2. เลือกรถ (ใช้ ArrowDown + Enter ตามที่ตกลงก่อนหน้านี้)
+            // 2. เลือกรถ (เปิด Dropdown -> หา input #s2id_autogen2 -> พิมพ์ "ทั้งหมด" -> Enter)
             const select2Container = await page.$('#s2id_ddl_truck');
             if (select2Container) {
                 console.log('   Found #s2id_ddl_truck, interacting with Select2...');
-                await page.click('#s2id_ddl_truck');
+                await select2Container.click(); // เปิด Dropdown
+                
                 try {
+                    // รอ animation เปิด Dropdown และรอ input โผล่
+                    // ใช้ ID #s2id_autogen2 ตาม Recording
+                    const searchInputSelector = '#s2id_autogen2';
+                    await page.waitForSelector(searchInputSelector, { visible: true, timeout: 5000 });
+                    
+                    console.log('   Found Select2 Search Input (#s2id_autogen2), typing "ทั้งหมด"...');
+                    await page.type(searchInputSelector, 'ทั้งหมด');
                     await new Promise(r => setTimeout(r, 1000));
-                    await page.keyboard.press('ArrowDown');
-                    await new Promise(r => setTimeout(r, 500));
                     await page.keyboard.press('Enter');
-                    console.log('   Select2: Pressed ArrowDown + Enter.');
+                    console.log('   Select2: Typed "ทั้งหมด" and pressed Enter.');
                 } catch (e) {
-                    console.warn('   ⚠️ Select2 interaction failed, trying default select fallback...');
+                    console.warn('   ⚠️ Select2 interaction failed:', e.message);
+                    // Fallback: ถ้าหา input ไม่เจอ ลองกด ArrowDown + Enter
+                    console.log('   Fallback: Trying ArrowDown + Enter...');
+                    await page.keyboard.press('ArrowDown');
+                    await page.keyboard.press('Enter');
                 }
             } else {
                 console.log('   #s2id_ddl_truck not found, trying standard #ddl_truck...');
@@ -264,28 +274,13 @@ function extractDataFromReport(filePath, reportType) {
             // Debug 2
             await page.screenshot({ path: path.join(downloadPath, 'report4_02_before_search.png') });
 
-            // 3. กดค้นหา (ใช้การเรียก Function หรือ Selector ละเอียด)
+            // 3. กดค้นหา
             console.log('   Clicking Search Report 4...');
-            
             await page.evaluate(() => {
-                // วิธีที่ 1: เรียก Function โดยตรง (แม่นยำที่สุดสำหรับ onclick="sertch_data();")
                 if (typeof sertch_data === 'function') {
-                    console.log("Calling sertch_data() directly...");
                     sertch_data();
                 } else {
-                    // วิธีที่ 2: ใช้ Selector แบบละเอียดตามที่คุณให้มา
-                    console.warn("sertch_data not found, trying specific selector...");
-                    const exactBtn = document.querySelector("#content > div.container-fluid > div > div > div:nth-child(2) > div > table > tbody > tr:nth-child(3) > td:nth-child(6) > span");
-                    
-                    if (exactBtn) {
-                        exactBtn.click();
-                    } else {
-                        // วิธีที่ 3: Fallback สุดท้าย หาปุ่มที่มี class 'btn-info' และมีข้อความ 'ค้นหา'
-                        const allBtns = Array.from(document.querySelectorAll('.btn.btn-info'));
-                        const searchBtn = allBtns.find(b => b.innerText.includes('ค้นหา'));
-                        if (searchBtn) searchBtn.click();
-                        else throw new Error("Search button not found!");
-                    }
+                    document.querySelector('td:nth-of-type(6) > span').click();
                 }
             });
 
@@ -296,20 +291,16 @@ function extractDataFromReport(filePath, reportType) {
                 console.log(`      ... Passed ${i} minute(s)`);
             }
 
-            // Debug 3 (ต้องมีไฟล์นี้ถ้าผ่านขั้นตอนรอมาได้)
+            // Debug 3
             await page.screenshot({ path: path.join(downloadPath, 'report4_03_after_wait.png') });
 
-            // กด Export (ใช้ XPath จาก Recording)
+            // กด Export
             console.log('   Clicking Export Report 4...');
             await page.evaluate(() => {
-                // XPath จาก Recording: //*[@id="table"]/div[1]/button[3]
                 const xpathResult = document.evaluate('//*[@id="table"]/div[1]/button[3]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
                 const btn = xpathResult.singleNodeValue;
-                
-                if (btn) {
-                    btn.click();
-                } else {
-                    // Fallback
+                if (btn) btn.click();
+                else {
                     const allBtns = Array.from(document.querySelectorAll('button'));
                     const excelBtn = allBtns.find(b => b.innerText.includes('Excel') || b.title === 'Excel');
                     if (excelBtn) excelBtn.click();
