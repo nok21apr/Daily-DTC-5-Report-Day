@@ -203,7 +203,7 @@ function extractDataFromReport(filePath, reportType) {
         }, startDateTime, endDateTime);
         await page.click('td:nth-of-type(6) > span');
         
-        console.log('   ⏳ Waiting 4 mins (Updated)...'); // ปรับเวลาเป็น 3 นาที
+        console.log('   ⏳ Waiting 4 mins (Updated)...'); // ปรับเวลาเป็น 4 นาที
         await new Promise(r => setTimeout(r, 200000)); // 200,000 ms
 
         await page.evaluate(() => {
@@ -275,10 +275,11 @@ function extractDataFromReport(filePath, reportType) {
             // Debug 2
             await page.screenshot({ path: path.join(downloadPath, 'report4_02_before_search.png') });
 
-            // กดค้นหา
+            // กดค้นหา (ใช้ Selector ที่คุณให้มา)
             console.log('   Clicking Search Report 4...');
-            await page.waitForSelector('td:nth-of-type(6) > span', { visible: true });
-            await page.click('td:nth-of-type(6) > span');
+            const searchSelector = '#content > div.container-fluid > div > div > div:nth-child(2) > div > table > tbody > tr:nth-child(3) > td:nth-child(6) > span';
+            await page.waitForSelector(searchSelector, { visible: true });
+            await page.click(searchSelector);
 
             // รอ 4 นาที (240s)
             console.log('   ⏳ Waiting 4 mins for Report 4 data (Updated)...');
