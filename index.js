@@ -234,15 +234,32 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         // =================================================================
         // REPORT 1: Over Speed (Wait 5 Mins)
         // =================================================================
+        console.log('1️⃣ Step 1: Login...');
+        await page.goto('https://gps.dtc.co.th/ultimate/index.php', { waitUntil: 'domcontentloaded' });
+        await page.waitForSelector('#txtname', { visible: true, timeout: 60000 });
+        await page.type('#txtname', DTC_USERNAME);
+        await page.type('#txtpass', DTC_PASSWORD);
+        
+        await Promise.all([
+            page.evaluate(() => document.getElementById('btnLogin').click()),
+            page.waitForFunction(() => !document.querySelector('#txtname'), { timeout: 60000 })
+        ]);
+        console.log('✅ Login Success');
+
+        const todayStr = getTodayFormatted();
+        const startDateTime = `${todayStr} 06:00`;
+        const endDateTime = `${todayStr} 18:00`;
+        console.log(`🕒 Global Time Settings: ${startDateTime} to ${endDateTime}`);
+
+        // =================================================================
+        // STEP 2: REPORT 1 - Over Speed
+        // =================================================================
         console.log('📊 Processing Report 1: Over Speed...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
-        await page.waitForSelector('#speed_max', { visible: true });
         
-        // รอ Dropdown รถให้มีข้อมูล
-        await page.waitForFunction(() => {
-            const s = document.getElementById('ddl_truck');
-            return s && s.options.length > 1; 
-        }, { timeout: 60000 });
+        await page.waitForSelector('#speed_max', { visible: true });
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 2000));
 
         await page.evaluate((start, end) => {
             document.getElementById('speed_max').value = '55';
@@ -250,29 +267,34 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             document.getElementById('date10').value = end;
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
-            if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '1';
-            
-            // Loop Select All
-            const select = document.getElementById('ddl_truck');
-            if(select) {
-                for(let i=0; i<select.options.length; i++) {
-                    if(select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
-                        select.selectedIndex = i; break; 
-                    }
-                }
-                select.dispatchEvent(new Event('change', { bubbles: true }));
+            if(document.getElementById('ddlMinute')) {
+                document.getElementById('ddlMinute').value = '1';
+                document.getElementById('ddlMinute').dispatchEvent(new Event('change'));
             }
+            
+            // เลือกทะเบียน "ทั้งหมด"
+            var selectElement = document.getElementById('ddl_truck'); 
+            var options = selectElement.options; 
+            for (var i = 0; i < options.length; i++) { 
+                if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+            } 
+            selectElement.dispatchEvent(new Event('change', { bubbles: true }));
         }, startDateTime, endDateTime);
 
-        await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
-        
-        // *** STRICT HARD WAIT 5 MINS ***
-        console.log('   ⏳ Waiting 5 mins for data loading...');
-        await delay(300000); 
+        console.log('   Searching Report 1...');
+        await page.evaluate(() => {
+            if(typeof sertch_data === 'function') sertch_data();
+            else document.querySelector("span[onclick='sertch_data();']").click();
+        });
 
+        console.log('   ⏳ Waiting 5 mins...');
+        await new Promise(resolve => setTimeout(resolve, 300000));
+        
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
+        console.log('   Exporting Report 1...');
         await page.evaluate(() => document.getElementById('btnexport').click());
-        const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
+        
+        await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
 
         // =================================================================
         // REPORT 2: Idling (Wait 3 Mins)
