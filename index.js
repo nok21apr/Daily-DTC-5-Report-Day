@@ -8,12 +8,15 @@ const ExcelJS = require('exceljs');
 
 // --- Helper Functions ---
 
+// ฟังก์ชันรอ (Delay) แบบ Promise
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 async function waitForDownloadAndRename(downloadPath, newFileName) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
 
-    // รอไฟล์สูงสุด 5 นาที (300 วินาที) เผื่อไฟล์ใหญ่มาก
-    for (let i = 0; i < 300; i++) {
+    // รอไฟล์เข้ามาในโฟลเดอร์ (Max 2 นาที เพราะกด Export ไปแล้ว)
+    for (let i = 0; i < 120; i++) {
         const files = fs.readdirSync(downloadPath);
         downloadedFile = files.find(f => 
             (f.endsWith('.xls') || f.endsWith('.xlsx')) && 
@@ -23,33 +26,27 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
         );
         
         if (downloadedFile) break;
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await delay(1000);
     }
 
-    if (!downloadedFile) {
-        throw new Error(`Download failed or timed out for ${newFileName}`);
-    }
+    if (!downloadedFile) throw new Error(`Download timeout for ${newFileName}`);
 
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // รอ File System เขียนไฟล์เสร็จ
+    await delay(5000);
 
     const oldPath = path.join(downloadPath, downloadedFile);
     const finalFileName = `DTC_Completed_${newFileName}`;
     const newPath = path.join(downloadPath, finalFileName);
     
-    // ตรวจสอบขนาดไฟล์เบื้องต้น
+    // ตรวจสอบขนาด
     const stats = fs.statSync(oldPath);
     if (stats.size === 0) throw new Error(`Downloaded file ${downloadedFile} is empty!`);
-    
-    // แสดงขนาดไฟล์ (KB)
-    const fileSizeInKB = (stats.size / 1024).toFixed(2);
-    console.log(`   ✅ Found File: ${downloadedFile} (Size: ${fileSizeInKB} KB)`);
-    
-    if (stats.size < 100) console.warn(`   ⚠️ Warning: File ${downloadedFile} seems too small (${stats.size} bytes).`);
+    console.log(`   ✅ Found File: ${downloadedFile} (${(stats.size/1024).toFixed(2)} KB)`);
 
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     fs.renameSync(oldPath, newPath);
     
-    // แปลงเป็น XLSX
+    // แปลง HTML Table เป็น XLSX ทันที
     const xlsxFileName = `Converted_${newFileName.replace('.xls', '.xlsx')}`;
     const xlsxPath = path.join(downloadPath, xlsxFileName);
     await convertHtmlToExcel(newPath, xlsxPath);
@@ -57,24 +54,13 @@ async function waitForDownloadAndRename(downloadPath, newFileName) {
     return xlsxPath;
 }
 
-// ฟังก์ชันรอให้ตารางมีข้อมูล
-async function waitForTableData(page, minRows = 2, timeout = 300000) {
-    console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
-    try {
-        await page.waitForFunction((min) => {
-            const rows = document.querySelectorAll('table tr');
-            return rows.length >= min; 
-        }, { timeout: timeout }, minRows);
-        console.log('   ✅ Table data populated.');
-    } catch (e) {
-        console.warn('   ⚠️ Wait for table data timed out (Data might be empty).');
-    }
-}
-
+// ฟังก์ชันแปลง HTML (.xls) เป็น Excel (.xlsx) จริงๆ
 async function convertHtmlToExcel(sourcePath, destPath) {
     try {
+        console.log(`   Converting to XLSX...`);
         const content = fs.readFileSync(sourcePath, 'utf-8');
-        // ถ้าไม่ใช่ HTML (เป็น Binary XLS อยู่แล้ว) ให้ Copy เลย
+        
+        // ถ้าเนื้อหาไม่ใช่ HTML (เป็น Binary Excel อยู่แล้ว) ให้ Copy เลย
         if (!content.trim().startsWith('<')) {
              fs.copyFileSync(sourcePath, destPath);
              return;
@@ -84,12 +70,13 @@ async function convertHtmlToExcel(sourcePath, destPath) {
         const table = dom.window.document.querySelector('table');
         
         if (!table) {
+             console.warn('   ⚠️ No HTML table found, copying original file.');
              fs.copyFileSync(sourcePath, destPath);
              return;
         }
 
         const workbook = new ExcelJS.Workbook();
-        const worksheet = workbook.addWorksheet('DMS Report');
+        const worksheet = workbook.addWorksheet('Report Data');
         const rows = Array.from(table.querySelectorAll('tr'));
 
         rows.forEach((row, rowIndex) => {
@@ -97,26 +84,24 @@ async function convertHtmlToExcel(sourcePath, destPath) {
             const rowData = cells.map(cell => cell.textContent.replace(/<[^>]*>/g, '').trim());
             const excelRow = worksheet.addRow(rowData);
 
-            // จัดรูปแบบ
+            // จัดรูปแบบให้สวยงาม
             excelRow.eachCell((cell, colNumber) => {
                 cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
-                cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
-                // Header Styling
-                if (rowIndex === 0 || cells[colNumber-1].tagName === 'TH') {
-                    cell.font = { bold: true };
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD3D3D3' } };
-                    cell.alignment = { vertical: 'middle', horizontal: 'center' };
+                cell.alignment = { vertical: 'middle', horizontal: 'left' };
+                if (rowIndex === 0) { // Header
+                    cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } }; // Blue Header
                 }
             });
         });
 
-        // Auto-fit Columns (Simplified)
-        worksheet.columns.forEach(column => { column.width = 20; });
+        // Auto width (คร่าวๆ)
+        worksheet.columns.forEach(col => { col.width = 20; });
 
         await workbook.xlsx.writeFile(destPath);
-        console.log(`   ✅ Converted to XLSX: ${path.basename(destPath)}`);
+        console.log(`   ✅ Converted: ${path.basename(destPath)}`);
     } catch (e) {
-        console.warn(`   ⚠️ Conversion failed, keeping original: ${e.message}`);
+        console.warn(`   ⚠️ Conversion error: ${e.message}`);
         fs.copyFileSync(sourcePath, destPath);
     }
 }
@@ -132,11 +117,14 @@ function parseDurationToMinutes(durationStr) {
     const cleanStr = durationStr.replace(/[^\d:]/g, ''); 
     if (!cleanStr.includes(':')) return 0;
     const parts = cleanStr.split(':').map(Number);
+    // HH:MM:SS -> Min
     if (parts.length === 3) return (parts[0] * 60) + parts[1] + (parts[2] / 60);
+    // HH:MM -> Min
     if (parts.length === 2) return (parts[0] * 60) + parts[1];
     return 0;
 }
 
+// ฟังก์ชันอ่านข้อมูลจาก XLSX ที่แปลงแล้ว
 async function extractDataFromXLSX(filePath, reportType) {
     try {
         if (!fs.existsSync(filePath)) return [];
@@ -146,7 +134,9 @@ async function extractDataFromXLSX(filePath, reportType) {
         const data = [];
 
         worksheet.eachRow((row, rowNumber) => {
-            if (rowNumber < 2) return; 
+            if (rowNumber < 2) return; // Skip Header
+            
+            // ExcelJS row.values เริ่มที่ index 1
             const cells = Array.isArray(row.values) ? row.values.slice(1) : []; 
             if (cells.length < 4) return;
 
@@ -163,18 +153,21 @@ async function extractDataFromXLSX(filePath, reportType) {
                 const duration = String(cells[cells.length - 1]);
                 data.push({ plate, duration, durationMin: parseDurationToMinutes(duration) });
             } else if (reportType === 'critical') {
-                const detailIndex = cells.findIndex(c => String(c).includes(plate)) + 1;
-                const detail = cells[detailIndex] ? String(cells[detailIndex]) : 'Event';
+                // หา Detail: ช่องถัดจากทะเบียน
+                const plateIndex = cells.findIndex(c => String(c).trim() === plate);
+                const detail = cells[plateIndex + 1] ? String(cells[plateIndex + 1]) : 'Unknown Event';
                 data.push({ plate, detail });
             } else if (reportType === 'forbidden') {
+                // Forbidden: ทะเบียน, สถานี, ..., เวลา
+                const plateIndex = cells.findIndex(c => String(c).trim() === plate);
+                const station = cells[plateIndex + 1] ? String(cells[plateIndex + 1]) : '';
                 const duration = String(cells[cells.length - 1]);
-                data.push({ plate, duration, durationMin: parseDurationToMinutes(duration) });
+                data.push({ plate, station, duration, durationMin: parseDurationToMinutes(duration) });
             }
         });
-        console.log(`      -> Extracted ${data.length} records from ${path.basename(filePath)}`);
         return data;
     } catch (e) {
-        console.warn(`   ⚠️ Extract Error: ${e.message}`);
+        console.warn(`   ⚠️ Extract Error ${path.basename(filePath)}: ${e.message}`);
         return [];
     }
 }
@@ -204,7 +197,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Verified Version)...');
+    console.log('🚀 Starting DTC Automation (Strict Wait & Conversion)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -239,13 +232,13 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const endDateTime = `${todayStr} 18:00`;
         
         // =================================================================
-        // REPORT 1: Over Speed
+        // REPORT 1: Over Speed (Wait 5 Mins)
         // =================================================================
         console.log('📊 Processing Report 1: Over Speed...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#speed_max', { visible: true });
         
-        // รอ Dropdown รถ
+        // รอ Dropdown รถให้มีข้อมูล
         await page.waitForFunction(() => {
             const s = document.getElementById('ddl_truck');
             return s && s.options.length > 1; 
@@ -259,7 +252,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             document.getElementById('date10').dispatchEvent(new Event('change'));
             if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '1';
             
-            // เลือก "ทั้งหมด" (วนลูปหา)
+            // Loop Select All
             const select = document.getElementById('ddl_truck');
             if(select) {
                 for(let i=0; i<select.options.length; i++) {
@@ -273,23 +266,22 @@ function zipFiles(sourceDir, outPath, filesToZip) {
 
         await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
         
-        // *** Hard Wait 5 mins (For Wait For Table Data) ***
-        await waitForTableData(page, 2, 300000); 
+        // *** STRICT HARD WAIT 5 MINS ***
+        console.log('   ⏳ Waiting 5 mins for data loading...');
+        await delay(300000); 
 
+        try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
         const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
 
         // =================================================================
-        // REPORT 2: Idling
+        // REPORT 2: Idling (Wait 3 Mins)
         // =================================================================
         console.log('📊 Processing Report 2: Idling...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_02.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
         
-        await page.waitForFunction(() => {
-            const s = document.getElementById('ddl_truck');
-            return s && s.options.length > 1; 
-        }, { timeout: 60000 });
+        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -301,33 +293,28 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             const select = document.getElementById('ddl_truck');
             if(select) {
                 for(let i=0; i<select.options.length; i++) {
-                    if(select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
-                        select.selectedIndex = i; break; 
-                    }
+                    if(select.options[i].text.includes('ทั้งหมด')) { select.selectedIndex = i; break; }
                 }
                 select.dispatchEvent(new Event('change', { bubbles: true }));
             }
         }, startDateTime, endDateTime);
 
-        await page.click('td:nth-of-type(6) > span');
+        await page.click('td:nth-of-type(6) > span'); // Search
         
-        // Wait for Data
-        await waitForTableData(page, 2, 180000);
+        console.log('   ⏳ Waiting 3 mins...');
+        await delay(180000);
 
         await page.evaluate(() => document.getElementById('btnexport').click());
         const file2 = await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
 
         // =================================================================
-        // REPORT 3: Sudden Brake
+        // REPORT 3: Sudden Brake (Wait 3 Mins)
         // =================================================================
         console.log('📊 Processing Report 3: Sudden Brake...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/report_hd.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
         
-        await page.waitForFunction(() => {
-            const s = document.getElementById('ddl_truck');
-            return s && s.options.length > 1; 
-        }, { timeout: 60000 });
+        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -338,19 +325,18 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             const select = document.getElementById('ddl_truck');
             if(select) {
                 for(let i=0; i<select.options.length; i++) {
-                    if(select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
-                        select.selectedIndex = i; break; 
-                    }
+                    if(select.options[i].text.includes('ทั้งหมด')) { select.selectedIndex = i; break; }
                 }
                 select.dispatchEvent(new Event('change', { bubbles: true }));
             }
         }, startDateTime, endDateTime);
 
-        await page.click('td:nth-of-type(6) > span');
+        await page.click('td:nth-of-type(6) > span'); // Search
         
-        // Wait for Data
-        await waitForTableData(page, 2, 180000);
+        console.log('   ⏳ Waiting 3 mins...');
+        await delay(180000);
 
+        // หาปุ่ม Excel ในตาราง
         await page.evaluate(() => {
             const btns = Array.from(document.querySelectorAll('button'));
             const b = btns.find(b => b.innerText.includes('Excel') || b.title === 'Excel');
@@ -359,20 +345,14 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // =================================================================
-        // REPORT 4: Harsh Start
+        // REPORT 4: Harsh Start (Wait 3 Mins)
         // =================================================================
         console.log('📊 Processing Report 4: Harsh Start...');
         try {
             await page.goto('https://gps.dtc.co.th/ultimate/Report/report_ha.php', { waitUntil: 'domcontentloaded' });
             await page.waitForSelector('#date9', { visible: true });
             
-            // รอ Dropdown โหลด
-            await page.waitForFunction(() => {
-                const s = document.getElementById('ddl_truck');
-                return s && s.options.length > 1; 
-            }, { timeout: 60000 });
-
-            console.log('   Setting Report 4 Conditions...');
+            await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
 
             await page.evaluate((start, end) => {
                 document.getElementById('date9').value = start;
@@ -380,33 +360,25 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 document.getElementById('date9').dispatchEvent(new Event('change'));
                 document.getElementById('date10').dispatchEvent(new Event('change'));
                 
-                // Programmatic Select: All Trucks
                 const select = document.getElementById('ddl_truck');
                 if(select) {
                     for(let i=0; i<select.options.length; i++) {
-                        if(select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
-                            select.selectedIndex = i; break; 
-                        }
+                        if(select.options[i].text.includes('ทั้งหมด')) { select.selectedIndex = i; break; }
                     }
                     select.dispatchEvent(new Event('change', { bubbles: true }));
-                    if (typeof $ !== 'undefined' && $(select).data('select2')) {
-                        $(select).trigger('change'); 
-                    }
                 }
             }, startDateTime, endDateTime);
 
-            // กด Search
-            console.log('   Clicking Search Report 4...');
+            // กด Search โดยตรง (ผ่าน Function หรือ Click)
             await page.evaluate(() => {
                 if(typeof sertch_data === 'function') sertch_data();
                 else document.querySelector('td:nth-of-type(6) > span').click();
             });
 
-            // Wait for Data
-            await waitForTableData(page, 2, 180000);
+            console.log('   ⏳ Waiting 3 mins...');
+            await delay(180000);
 
             // กด Export
-            console.log('   Clicking Export Report 4...');
             await page.evaluate(() => {
                 const xpathResult = document.evaluate('//*[@id="table"]/div[1]/button[3]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
                 if(xpathResult.singleNodeValue) xpathResult.singleNodeValue.click();
@@ -419,21 +391,16 @@ function zipFiles(sourceDir, outPath, filesToZip) {
 
             const file4 = await waitForDownloadAndRename(downloadPath, 'Report4_HarshStart.xls');
 
-        } catch (error) {
-            console.error('❌ Report 4 Failed:', error.message);
-        }
+        } catch (e) { console.error('Report 4 Skipped:', e.message); }
 
         // =================================================================
-        // REPORT 5: Forbidden Parking
+        // REPORT 5: Forbidden Parking (Wait 3 Mins)
         // =================================================================
         console.log('📊 Processing Report 5: Forbidden Parking...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_Instation.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
         
-        await page.waitForFunction(() => {
-            const s = document.getElementById('ddl_truck');
-            return s && s.options.length > 1; 
-        }, { timeout: 60000 });
+        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -457,7 +424,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             }
         }, startDateTime, endDateTime);
 
-        await new Promise(r => setTimeout(r, 2000));
+        await delay(2000);
         await page.evaluate(() => {
             const allSelects = document.getElementsByTagName('select');
             for(let s of allSelects) { 
@@ -467,10 +434,10 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             }
         });
 
-        await page.click('td:nth-of-type(7) > span');
+        await page.click('td:nth-of-type(7) > span'); // Search
         
-        // Wait for Data
-        await waitForTableData(page, 2, 180000);
+        console.log('   ⏳ Waiting 3 mins...');
+        await delay(180000);
 
         await page.evaluate(() => document.getElementById('btnexport').click());
         const file5 = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
@@ -495,7 +462,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         try { startData = await extractDataFromXLSX(fileMap.start, 'critical'); } catch(e){}
         const forbiddenData = await extractDataFromXLSX(fileMap.forbidden, 'forbidden');
 
-        // Aggregation & PDF Generation
+        // Aggregation & PDF Logic (คงเดิม)
         const processStats = (data, key) => {
             const stats = {};
             data.forEach(d => {
@@ -515,7 +482,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const topForbidden = processStats(forbiddenData, 'durationMin');
         const totalCritical = brakeData.length + startData.length;
 
-        // HTML Content
+        // HTML Content for PDF
         const htmlContent = `
         <!DOCTYPE html>
         <html lang="th">
