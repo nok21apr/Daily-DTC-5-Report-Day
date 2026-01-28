@@ -226,15 +226,14 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const startDateTime = `${todayStr} 06:00`;
         const endDateTime = `${todayStr} 18:00`;
         
-        // =================================================================
-        // REPORT 1: Over Speed
+        // STEP 2: REPORT 1 - Over Speed
         // =================================================================
         console.log('📊 Processing Report 1: Over Speed...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
-        await page.waitForSelector('#speed_max', { visible: true });
         
-        // รอ Dropdown
-        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1, {timeout: 60000});
+        await page.waitForSelector('#speed_max', { visible: true });
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 2000));
 
         await page.evaluate((start, end) => {
             document.getElementById('speed_max').value = '55';
@@ -247,64 +246,74 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 document.getElementById('ddlMinute').dispatchEvent(new Event('change'));
             }
             
-            // Programmatic Select: All Trucks
-            const select = document.getElementById('ddl_truck');
-            if(select) {
-                let found = false;
-                for(let i=0; i<select.options.length; i++) {
-                    if(select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
-                        select.selectedIndex = i; found = true; break; 
-                    }
-                }
-                if(!found && select.options.length > 0) select.selectedIndex = 0;
-                select.dispatchEvent(new Event('change', { bubbles: true }));
-            }
+            // เลือกทะเบียน "ทั้งหมด"
+            var selectElement = document.getElementById('ddl_truck'); 
+            var options = selectElement.options; 
+            for (var i = 0; i < options.length; i++) { 
+                if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+            } 
+            selectElement.dispatchEvent(new Event('change', { bubbles: true }));
         }, startDateTime, endDateTime);
 
-        await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
-        
-        // Hard Wait 5 Mins
-        console.log('   ⏳ Waiting 5 mins...');
-        await new Promise(r => setTimeout(r, 300000)); 
+        console.log('   Searching Report 1...');
+        await page.evaluate(() => {
+            if(typeof sertch_data === 'function') sertch_data();
+            else document.querySelector("span[onclick='sertch_data();']").click();
+        });
 
+        console.log('   ⏳ Waiting 5 mins...');
+        await new Promise(resolve => setTimeout(resolve, 300000));
+        
+        try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
+        console.log('   Exporting Report 1...');
         await page.evaluate(() => document.getElementById('btnexport').click());
-        const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
+        
+        await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
+
 
         // =================================================================
-        // REPORT 2: Idling
+        // STEP 3: REPORT 2 - Idling
         // =================================================================
         console.log('📊 Processing Report 2: Idling...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_02.php', { waitUntil: 'domcontentloaded' });
+        
         await page.waitForSelector('#date9', { visible: true });
-        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 2000));
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
-            if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '10';
             
-            const select = document.getElementById('ddl_truck');
-            if(select) {
-                for(let i=0; i<select.options.length; i++) {
-                    if(select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
-                        select.selectedIndex = i; break; 
-                    }
-                }
-                select.dispatchEvent(new Event('change', { bubbles: true }));
+            if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '10';
+
+            // เลือกทะเบียน "ทั้งหมด"
+            var selectElement = document.getElementById('ddl_truck'); 
+            if (selectElement) {
+                var options = selectElement.options; 
+                for (var i = 0; i < options.length; i++) { 
+                    if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+                } 
+                selectElement.dispatchEvent(new Event('change', { bubbles: true }));
             }
         }, startDateTime, endDateTime);
 
+        console.log('   Searching Report 2...');
         await page.click('td:nth-of-type(6) > span');
+
         console.log('   ⏳ Waiting 5 mins...');
-        await new Promise(r => setTimeout(r, 300000));
+        await new Promise(resolve => setTimeout(resolve, 300000));
 
+        try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
+        console.log('   Exporting Report 2...');
         await page.evaluate(() => document.getElementById('btnexport').click());
-        const file2 = await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
-
+        
+        await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
+        
         // =================================================================
-        // REPORT 3: Sudden Brake
+        //  STEP 4: REPORT 3: Sudden Brake
         // =================================================================
         console.log('📊 Processing Report 3: Sudden Brake...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/report_hd.php', { waitUntil: 'domcontentloaded' });
@@ -340,7 +349,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // =================================================================
-        // REPORT 4: Harsh Start
+        //  STEP 5: REPORT 4: Harsh Start
         // =================================================================
         console.log('📊 Processing Report 4: Harsh Start...');
         try {
@@ -392,7 +401,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         } catch(e) { console.error('Report 4 Skipped:', e.message); }
 
         // =================================================================
-        // REPORT 5: Forbidden Parking
+        //  STEP 6: REPORT 5: Forbidden Parking
         // =================================================================
         console.log('📊 Processing Report 5: Forbidden Parking...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_Instation.php', { waitUntil: 'domcontentloaded' });
