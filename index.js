@@ -12,7 +12,7 @@ const ExcelJS = require('exceljs');
 async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 300000) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
-    const checkInterval = 2000; 
+    const checkInterval = 10000; 
     let waittime = 0;
 
     // วนลูปรอไฟล์จนกว่าจะเจอ หรือหมดเวลา
@@ -26,7 +26,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
         );
         
         if (downloadedFile) {
-            console.log(`   ✅ File detected: ${downloadedFile} (${waittime/1000}s)`);
+            console.log(`   ✅ File detected: ${downloadedFile} (${waittime/10000}s)`);
             break; 
         }
         
@@ -36,7 +36,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
 
     if (!downloadedFile) throw new Error(`Download timeout for ${newFileName}`);
 
-    await new Promise(resolve => setTimeout(resolve, 5000)); // รอเขียนไฟล์ให้เสร็จสมบูรณ์
+    await new Promise(resolve => setTimeout(resolve, 10000)); // รอเขียนไฟล์ให้เสร็จสมบูรณ์
 
     const oldPath = path.join(downloadPath, downloadedFile);
     const finalFileName = `DTC_Completed_${newFileName}`;
@@ -60,7 +60,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
 // 2. ฟังก์ชันรอตารางข้อมูล (Wait for Data Population)
 // สำคัญมาก! ต้องรอให้ตารางมีข้อมูลมากกว่า 2 แถว (Header + Data) ก่อนกด Export
 async function waitForTableData(page, minRows = 2, timeout = 300000) {
-    console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
+    console.log(`   Waiting for table data (Max ${timeout/10000}s)...`);
     try {
         await page.waitForFunction((min) => {
             const rows = document.querySelectorAll('table tr');
