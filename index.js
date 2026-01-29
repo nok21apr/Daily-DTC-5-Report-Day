@@ -9,7 +9,7 @@ const ExcelJS = require('exceljs');
 
 // --- Helper Functions ---
 
-// 1. ฟังก์ชันรอโหลดไฟล์ (คงเดิมตามไฟล์ล่าสุด)
+// 1. ฟังก์ชันรอโหลดไฟล์ และแปลงเป็น CSV ทั้งหมด
 async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 300000) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
@@ -50,16 +50,12 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     fs.renameSync(oldPath, newPath);
     
-    // Logic การแปลงไฟล์ (ตามคำขอ: Report 5 -> CSV)
-    if (newFileName.includes('Report5')) {
-        const csvFileName = `Converted_${newFileName.replace('.xls', '.csv')}`;
-        const csvPath = path.join(downloadPath, csvFileName);
-        await convertHtmlToCsv(newPath, csvPath);
-        return csvPath;
-    } else {
-        // Report 1-4: ไม่แปลง (ใช้ไฟล์ HTML-XLS เดิม)
-        return newPath;
-    }
+    // แปลงทุกไฟล์เป็น CSV (UTF-8)
+    const csvFileName = `Converted_${newFileName.replace('.xls', '.csv')}`;
+    const csvPath = path.join(downloadPath, csvFileName);
+    await convertHtmlToCsv(newPath, csvPath);
+    
+    return csvPath;
 }
 
 // 2. ฟังก์ชันรอตารางข้อมูล (คงเดิม)
@@ -78,7 +74,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
     }
 }
 
-// 3. แปลง HTML -> CSV (สำหรับ Report 5)
+// 3. แปลง HTML -> CSV (ใช้ได้กับทุก Report)
 async function convertHtmlToCsv(sourcePath, destPath) {
     try {
         console.log(`   🔄 Converting HTML to CSV...`);
@@ -87,18 +83,23 @@ async function convertHtmlToCsv(sourcePath, destPath) {
         const table = dom.window.document.querySelector('table');
 
         if (!table) {
+             // กรณีไฟล์ไม่ใช่ HTML Table (อาจเป็น Binary) ให้ copy ไปเลย (แต่อาจจะอ่านไม่ได้ด้วย csv-parse)
+             console.warn('   ⚠️ No HTML table found. Copying original file.');
              fs.copyFileSync(sourcePath, destPath);
              return;
         }
 
         const rows = Array.from(table.querySelectorAll('tr'));
-        let csvContent = '\uFEFF'; // BOM for Excel
+        let csvContent = '\uFEFF'; // BOM for Excel UTF-8 support
 
         rows.forEach(row => {
             const cells = Array.from(row.querySelectorAll('td, th'));
             const rowData = cells.map(cell => {
+                // ลบ space เกิน, tab, new line
                 let text = cell.textContent.replace(/\s+/g, ' ').trim();
+                // Escape double quotes
                 if (text.includes('"')) text = text.replace(/"/g, '""');
+                // ครอบด้วย quotes ถ้ามี comma หรือ quote
                 if (text.includes(',') || text.includes('"')) text = `"${text}"`;
                 return text;
             });
@@ -120,6 +121,7 @@ function getTodayFormatted() {
 
 function parseDurationToMinutes(durationStr) {
     if (!durationStr) return 0;
+    // รองรับ 00:00:00 หรือ 00:00
     const match = durationStr.match(/(\d+):(\d+)(?::(\d+))?/);
     if (!match) return 0;
     const h = parseInt(match[1], 10);
@@ -128,54 +130,42 @@ function parseDurationToMinutes(durationStr) {
     return (h * 60) + m + (s / 60);
 }
 
-// *** UNIVERSAL DATA EXTRACTOR ***
+// *** UNIVERSAL DATA EXTRACTOR (รองรับ CSV ทุกรูปแบบ) ***
 async function extractDataUniversal(filePath, reportType) {
     try {
         if (!fs.existsSync(filePath)) return [];
-        const ext = path.extname(filePath).toLowerCase();
-        let rows = [];
-
-        // อ่านไฟล์ตามนามสกุล
-        if (ext === '.csv') {
-            const fileContent = fs.readFileSync(filePath, 'utf8');
-            rows = parse(fileContent, {
-                columns: false, 
-                skip_empty_lines: true,
-                relax_column_count: true
-            });
-        } else {
-            // HTML (.xls)
-            const content = fs.readFileSync(filePath, 'utf-8');
-            const dom = new JSDOM(content);
-            const tableRows = Array.from(dom.window.document.querySelectorAll('table tr'));
-            rows = tableRows.map(tr => 
-                Array.from(tr.querySelectorAll('td, th')).map(td => td.textContent.trim())
-            );
-        }
+        
+        // อ่านไฟล์ CSV
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        const rows = parse(fileContent, {
+            columns: false, 
+            skip_empty_lines: true,
+            relax_column_count: true
+        });
 
         const data = [];
         
         // Process Data
         rows.forEach((cells, rowIndex) => {
-            // ข้าม Header (Report 5 CSV มี Header 4-5 แถว, อื่นๆ 2)
-            const startRow = (reportType === 'forbidden') ? 5 : 2;
-            if (rowIndex < startRow) return;
-
-            if (cells.length < 3) return;
-
-            // Regex
+            // ข้าม Header: Report 5 มักมี Header 4-5 แถว, อื่นๆ 2 แถว
+            // ใช้ Logic ตรวจสอบว่าแถวนี้มีข้อมูลทะเบียนรถไหม ถ้ามีถึงเริ่มเก็บ
             const plateRegex = /[0-9]{1,3}-[0-9]{1,4}|[0-9]?[ก-ฮ]{1,3}-[0-9]{1,4}/; 
             const timeRegex = /\d{1,2}:\d{2}/; 
 
-            // 1. ทะเบียน
+            // 1. หาทะเบียน
             const plateIndex = cells.findIndex(c => plateRegex.test(c) && c.length < 25 && !c.includes(':'));
-            if (plateIndex === -1) return;
+            if (plateIndex === -1) return; // ไม่เจอทะเบียน ข้ามแถวนี้
+            
             const plate = cells[plateIndex];
 
-            // 2. เวลา (Duration)
+            // 2. หาเวลา (Duration)
+            // กรองหา cell ที่เป็นรูปแบบเวลาทั้งหมด
             const timeCells = cells.filter(c => timeRegex.test(c));
             let duration = "00:00:00";
-            if (timeCells.length > 0) duration = timeCells[timeCells.length - 1];
+            if (timeCells.length > 0) {
+                 // สมมติว่าค่าสุดท้ายคือ Duration (เพราะ Start/End time มักมาก่อน)
+                 duration = timeCells[timeCells.length - 1];
+            }
 
             if (reportType === 'speed' || reportType === 'idling') {
                 data.push({ plate, duration, durationMin: parseDurationToMinutes(duration) });
@@ -231,7 +221,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (CSV for Report 5)...');
+    console.log('🚀 Starting DTC Automation (All CSV Conversion)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -264,8 +254,9 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const todayStr = getTodayFormatted();
         const startDateTime = `${todayStr} 06:00`;
         const endDateTime = `${todayStr} 18:00`;
+        console.log(`🕒 Global Time Settings: ${startDateTime} to ${endDateTime}`);
 
-        // --- Step 2 to 6: STRICTLY PRESERVED ---
+        // --- Step 2 to 6: STRICTLY PRESERVED FROM YOUR UPLOAD ---
         
         // REPORT 1: Over Speed
         console.log('📊 Processing Report 1: Over Speed...');
@@ -290,6 +281,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await new Promise(r => setTimeout(r, 300000)); 
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
+        // Convert to CSV
         const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
 
         // REPORT 2: Idling
@@ -310,6 +302,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await new Promise(r => setTimeout(r, 300000));
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
+        // Convert to CSV
         const file2 = await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
 
         // REPORT 3: Sudden Brake
@@ -333,6 +326,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             const b = btns.find(b => b.innerText.includes('Excel') || b.title === 'Excel');
             if (b) b.click(); else document.querySelector('#table button:nth-of-type(3)')?.click();
         });
+        // Convert to CSV
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // REPORT 4: Harsh Start
@@ -379,6 +373,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                     if (excelBtn) excelBtn.click(); else throw new Error("Cannot find Export button for Report 4");
                 }
             });
+            // Convert to CSV
             const file4 = await waitForDownloadAndRename(downloadPath, 'Report4_HarshStart.xls');
         } catch (error) {
             console.error('❌ Report 4 Failed:', error.message);
@@ -423,23 +418,23 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await new Promise(r => setTimeout(r, 300000));
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
-        // คืนค่าเป็น CSV file path
+        // Convert to CSV
         const file5 = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary (UPDATED LOGIC)
+        // STEP 7: Generate PDF Summary (FROM CSV)
         // =================================================================
         console.log('📑 Step 7: Generating PDF Summary...');
 
         const fileMap = {
-            'speed': path.join(downloadPath, 'DTC_Completed_Report1_OverSpeed.xls'),
-            'idling': path.join(downloadPath, 'DTC_Completed_Report2_Idling.xls'),
-            'brake': path.join(downloadPath, 'DTC_Completed_Report3_SuddenBrake.xls'),
-            'start': path.join(downloadPath, 'DTC_Completed_Report4_HarshStart.xls'),
-            'forbidden': path.join(downloadPath, 'Converted_Report5_ForbiddenParking.csv') // Report 5 is CSV
+            'speed': path.join(downloadPath, 'Converted_Report1_OverSpeed.csv'),
+            'idling': path.join(downloadPath, 'Converted_Report2_Idling.csv'),
+            'brake': path.join(downloadPath, 'Converted_Report3_SuddenBrake.csv'),
+            'start': path.join(downloadPath, 'Converted_Report4_HarshStart.csv'),
+            'forbidden': path.join(downloadPath, 'Converted_Report5_ForbiddenParking.csv')
         };
 
-        // Extract Data
+        // Extract Data using new CSV Universal Extractor
         const speedData = await extractDataUniversal(fileMap.speed, 'speed');
         const idlingData = await extractDataUniversal(fileMap.idling, 'idling');
         const brakeData = await extractDataUniversal(fileMap.brake, 'critical');
@@ -447,7 +442,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         try { startData = await extractDataUniversal(fileMap.start, 'critical'); } catch(e){}
         const forbiddenData = await extractDataUniversal(fileMap.forbidden, 'forbidden');
 
-        // Aggregation
+        // Aggregation Logic (Top 5)
         const processStats = (data, key) => {
             const stats = {};
             data.forEach(d => {
@@ -478,7 +473,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
         };
 
-        // HTML Template
+        // HTML Template (Matching FleetSafetyReportv2.tex.pdf)
         const htmlContent = `
         <!DOCTYPE html>
         <html lang="th">
