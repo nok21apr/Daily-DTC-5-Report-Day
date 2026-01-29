@@ -26,7 +26,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
         );
         
         if (downloadedFile) {
-            console.log(`   ✅ File detected: ${downloadedFile}`);
+            console.log(`   ✅ File detected: ${downloadedFile} (${waittime/1000}s)`);
             break; 
         }
         
@@ -42,14 +42,13 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
     const finalFileName = `DTC_Completed_${newFileName}`;
     const newPath = path.join(downloadPath, finalFileName);
     
-    // ตรวจสอบขนาดไฟล์
     const stats = fs.statSync(oldPath);
     if (stats.size === 0) throw new Error(`Downloaded file is empty!`);
 
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     fs.renameSync(oldPath, newPath);
     
-    // แปลงเป็น CSV (UTF-8) เสมอ เพื่อให้ Step 7 อ่านได้ถูกต้อง
+    // แปลงเป็น CSV (UTF-8) เสมอ
     const csvFileName = `Converted_${newFileName.replace('.xls', '.csv')}`;
     const csvPath = path.join(downloadPath, csvFileName);
     await convertHtmlToCsv(newPath, csvPath);
@@ -72,16 +71,13 @@ async function convertHtmlToCsv(sourcePath, destPath) {
         }
 
         const rows = Array.from(table.querySelectorAll('tr'));
-        // ใส่ BOM (\uFEFF) เพื่อให้ Excel อ่านภาษาไทยออก และ csv-parse อ่านได้ถูกต้อง
-        let csvContent = '\uFEFF'; 
+        let csvContent = '\uFEFF'; // BOM for Excel UTF-8 support
 
         rows.forEach(row => {
             const cells = Array.from(row.querySelectorAll('td, th'));
             const rowData = cells.map(cell => {
                 let text = cell.textContent.replace(/\s+/g, ' ').trim();
-                // Escape double quotes
                 if (text.includes('"')) text = text.replace(/"/g, '""');
-                // ครอบด้วย quotes ถ้ามี comma หรือ quote
                 if (text.includes(',') || text.includes('"')) text = `"${text}"`;
                 return text;
             });
@@ -95,7 +91,25 @@ async function convertHtmlToCsv(sourcePath, destPath) {
     }
 }
 
-// --- HELPER: แปลงเวลาไทย/HH:MM:SS เป็นวินาที ---
+// 3. ฟังก์ชันรอตารางข้อมูล
+async function waitForTableData(page, minRows = 2, timeout = 300000) {
+    console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
+    try {
+        await page.waitForFunction((min) => {
+            const rows = document.querySelectorAll('table tr');
+            const bodyText = document.body.innerText;
+            if (bodyText.includes('ไม่พบข้อมูล') || bodyText.includes('No data found')) return true; 
+            return rows.length >= min; 
+        }, { timeout: timeout }, minRows);
+        console.log('   ✅ Table data populated.');
+    } catch (e) {
+        console.warn('   ⚠️ Wait for table data timed out.');
+    }
+}
+
+// --- NEW HELPERS FOR DATA PROCESSING ---
+
+// แปลงเวลาไทย/HH:MM:SS เป็นวินาที
 function parseDurationToSeconds(timeStr) {
     if (!timeStr) return 0;
     
@@ -107,18 +121,18 @@ function parseDurationToSeconds(timeStr) {
         const s = parseInt(thaiMatch[3] || 0);
         return (h * 3600) + (m * 60) + s;
     }
-
+   
     // กรณี 2: "00:11:19" (HH:MM:SS)
     if (timeStr.includes(':')) {
         const parts = timeStr.split(':').map(Number);
         if (parts.length === 3) return (parts[0] * 3600) + (parts[1] * 60) + parts[2];
         if (parts.length === 2) return (parts[0] * 60) + parts[1]; // MM:SS
     }
-
+   
     return 0;
 }
 
-// --- HELPER: แปลงวินาทีกลับเป็น HH:MM:SS ---
+// แปลงวินาทีกลับเป็น HH:MM:SS
 function formatSeconds(totalSeconds) {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -126,14 +140,14 @@ function formatSeconds(totalSeconds) {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
-// --- FUNCTION: อ่านและประมวลผล CSV ---
+// อ่านและประมวลผล CSV
 function processCSV(filePath, skipLines, colMap) {
     try {
         if (!fs.existsSync(filePath)) {
             console.warn(`File not found: ${filePath}`);
             return [];
         }
-
+        
         const fileContent = fs.readFileSync(filePath, 'utf8');
         // ข้ามบรรทัด Header ด้านบน
         const lines = fileContent.split('\n').slice(skipLines).join('\n');
@@ -142,18 +156,18 @@ function processCSV(filePath, skipLines, colMap) {
             columns: false,
             skip_empty_lines: true,
             relax_column_count: true,
-            bom: true // จัดการ BOM อัตโนมัติ
+            bom: true
         });
-
+   
         return records.map(row => {
             const data = {};
             for (const [key, index] of Object.entries(colMap)) {
                 // index ในที่นี้ User ส่งมาเป็น 1-based (Excel Style) ต้องลบ 1
-                const idx = parseInt(index) - 1;
+                const idx = parseInt(index); // index ที่ส่งมาเป็น 0-based จาก CSV array
                 data[key] = row[idx] ? row[idx].trim() : '';
             }
             return data;
-        }).filter(r => r.license); // กรองแถวว่างที่ไม่มีทะเบียนรถ/ชื่อรถ
+        }).filter(r => r.license && r.license !== 'รวม'); 
     } catch (err) {
         console.error(`Error reading ${filePath}:`, err.message);
         return [];
@@ -178,24 +192,6 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     });
 }
 
-// 2. ฟังก์ชันรอตารางข้อมูล (Wait for Data Population)
-async function waitForTableData(page, minRows = 2, timeout = 300000) {
-    console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
-    try {
-        await page.waitForFunction((min) => {
-            const rows = document.querySelectorAll('table tr');
-            const bodyText = document.body.innerText;
-            if (bodyText.includes('ไม่พบข้อมูล') || bodyText.includes('No data found')) return true; 
-            return rows.length >= min; 
-        }, { timeout: timeout }, minRows);
-        
-        const rowCount = await page.evaluate(() => document.querySelectorAll('table tr').length);
-        console.log(`   ✅ Table populated with ${rowCount} rows.`);
-    } catch (e) {
-        console.warn('   ⚠️ Wait for table data timed out (Data might be empty).');
-    }
-}
-
 // --- Main Script ---
 
 (async () => {
@@ -209,7 +205,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (CSV Conversion & PDF Revise)...');
+    console.log('🚀 Starting DTC Automation (CSV & Revised PDF)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -242,15 +238,15 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
         const todayStr = getTodayFormatted();
         const startDateTime = `${todayStr} 06:00`;
         const endDateTime = `${todayStr} 18:00`;
+        console.log(`🕒 Global Time Settings: ${startDateTime} to ${endDateTime}`);
+
+        // --- Step 2 to 6: DOWNLOAD REPORTS ---
         
-        // --- REPORT 1: Over Speed ---
+        // REPORT 1: Over Speed
         console.log('📊 Processing Report 1: Over Speed...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#speed_max', { visible: true });
-        
-        // รอ Dropdown รถ
-        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1, {timeout: 60000});
-
+        await new Promise(r => setTimeout(r, 10000));
         await page.evaluate((start, end) => {
             document.getElementById('speed_max').value = '55';
             document.getElementById('date9').value = start;
@@ -266,19 +262,17 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
             select.dispatchEvent(new Event('change', { bubbles: true }));
         }, startDateTime, endDateTime);
         await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
-        
-        await waitForTableData(page, 2, 300000); // Wait for Data
+        await waitForTableData(page, 2, 300000); 
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
         // Convert to CSV
         const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
 
-        // --- REPORT 2: Idling ---
+        // REPORT 2: Idling
         console.log('📊 Processing Report 2: Idling...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_02.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
-        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
-
+        await new Promise(r => setTimeout(r, 10000));
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
@@ -295,12 +289,11 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
         // Convert to CSV
         const file2 = await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
 
-        // --- REPORT 3: Sudden Brake ---
+        // REPORT 3: Sudden Brake
         console.log('📊 Processing Report 3: Sudden Brake...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/report_hd.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
-        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
-
+        await new Promise(r => setTimeout(r, 10000));
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
@@ -319,7 +312,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
         // Convert to CSV
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
-        // --- REPORT 4: Harsh Start ---
+        // REPORT 4: Harsh Start
         console.log('📊 Processing Report 4: Harsh Start...');
         try {
             await page.goto('https://gps.dtc.co.th/ultimate/Report/report_ha.php', { waitUntil: 'domcontentloaded' });
@@ -328,7 +321,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
                 const select = document.getElementById('ddl_truck');
                 return select && select.options.length > 1;
             }, { timeout: 60000 });
-            
+            console.log('   Setting Report 4 Conditions (Programmatic)...');
             await page.evaluate((start, end) => {
                 document.getElementById('date9').value = start;
                 document.getElementById('date10').value = end;
@@ -350,8 +343,9 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
             await page.evaluate(() => {
                 if (typeof sertch_data === 'function') { sertch_data(); } else { document.querySelector('td:nth-of-type(6) > span').click(); }
             });
-            await waitForTableData(page, 2, 180000); // Wait for Data
-            
+            console.log('   ⏳ Waiting 3 mins for Report 4 data...');
+            for (let i = 1; i <= 3; i++) { await new Promise(r => setTimeout(r, 60000)); console.log(`       ... Passed ${i} minute(s)`); }
+            console.log('   Clicking Export Report 4...');
             await page.evaluate(() => {
                 const xpathResult = document.evaluate('//*[@id="table"]/div[1]/button[3]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
                 const btn = xpathResult.singleNodeValue;
@@ -368,7 +362,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
             console.error('❌ Report 4 Failed:', error.message);
         }
 
-        // --- REPORT 5: Forbidden ---
+        // REPORT 5: Forbidden
         console.log('📊 Processing Report 5: Forbidden Parking...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_Instation.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
@@ -411,16 +405,17 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
         const file5 = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary (UPDATED WITH CSV LOGIC)
+        // STEP 7: Generate PDF Summary (UPDATED FROM YOUR CODE)
         // =================================================================
         console.log('📑 Step 7: Generating PDF Summary...');
 
+        // Mapping file paths
         const FILES_CSV = {
-            OVERSPEED: path.join(downloadPath, 'Converted_Report1_OverSpeed.csv'),
-            IDLING: path.join(downloadPath, 'Converted_Report2_Idling.csv'),
-            SUDDEN_BRAKE: path.join(downloadPath, 'Converted_Report3_SuddenBrake.csv'),
-            HARSH_START: path.join(downloadPath, 'Converted_Report4_HarshStart.csv'),
-            PROHIBITED: path.join(downloadPath, 'Converted_Report5_ForbiddenParking.csv')
+            OVERSPEED: file1,
+            IDLING: file2,
+            SUDDEN_BRAKE: file3,
+            HARSH_START: typeof file4 !== 'undefined' ? file4 : '',
+            PROHIBITED: file5
         };
 
         // 1. Process Report 1: Over Speed
@@ -460,7 +455,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
         // 3. Process Report 3 & 4
         // Check file existence first to avoid errors if reports failed
         const rawBrake = fs.existsSync(FILES_CSV.SUDDEN_BRAKE) ? processCSV(FILES_CSV.SUDDEN_BRAKE, 4, { license: 2, v_start: 4, v_end: 5 }) : [];
-        const rawStart = fs.existsSync(FILES_CSV.HARSH_START) ? processCSV(FILES_CSV.HARSH_START, 4, { license: 2, v_start: 4, v_end: 5 }) : [];
+        const rawStart = (FILES_CSV.HARSH_START && fs.existsSync(FILES_CSV.HARSH_START)) ? processCSV(FILES_CSV.HARSH_START, 4, { license: 2, v_start: 4, v_end: 5 }) : [];
         
         const criticalEvents = [
             ...rawBrake.map(r => ({ ...r, type: 'Sudden Brake', level: 'High' })),
@@ -485,7 +480,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
             .map(([license, time]) => ({ license, time }))
             .sort((a, b) => b.time - a.time).slice(0, 5);
 
-        // --- HTML GENERATION (Your Template) ---
+        // --- HTML GENERATION ---
         const today = new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
         
         const html = `
@@ -703,8 +698,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
         await page.pdf({
             path: pdfPath,
             format: 'A4',
-            printBackground: true,
-            margin: { top: '0px', bottom: '0px', left: '0px', right: '0px' } // No margin as per template style
+            printBackground: true
         });
         console.log(`   ✅ PDF Generated: ${pdfPath}`);
 
@@ -714,7 +708,7 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
         console.log('📧 Step 8: Zipping CSVs & Sending Email...');
         
         const allFiles = fs.readdirSync(downloadPath);
-        // เลือกเฉพาะ Excel ที่โหลดเสร็จแล้ว (Converted_...csv)
+        // เลือกเฉพาะ CSV ที่แปลงแล้ว (Converted_...csv)
         const csvsToZip = allFiles.filter(f => f.startsWith('Converted_') && f.endsWith('.csv'));
 
         if (csvsToZip.length > 0 || fs.existsSync(pdfPath)) {
