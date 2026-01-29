@@ -12,7 +12,7 @@ const ExcelJS = require('exceljs');
 async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 300000) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
-    const checkInterval = 2000; 
+    const checkInterval = 100000; 
     let waittime = 0;
 
     while (waittime < maxWaitMs) {
@@ -25,7 +25,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
         );
         
         if (downloadedFile) {
-            console.log(`   ✅ File detected: ${downloadedFile} (${waittime/1000}s)`);
+            console.log(`   ✅ File detected: ${downloadedFile} (${waittime/10000}s)`);
             break; 
         }
         
@@ -63,7 +63,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
 
 // 2. ฟังก์ชันรอตารางข้อมูล (Strict Wait)
 async function waitForTableData(page, minRows = 2, timeout = 300000) {
-    console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
+    console.log(`   Waiting for table data (Max ${timeout/10000}s)...`);
     try {
         await page.waitForFunction((min) => {
             const rows = document.querySelectorAll('table tr');
