@@ -1,7 +1,7 @@
 {
   "name": "dtc-daily-report-automation",
-  "version": "2.3.0",
-  "description": "Daily Report Download 06:00-18:00 with XLSX Conversion and PDF Summary",
+  "version": "3.1.0",
+  "description": "Daily Report Download with Mixed Format (HTML/CSV) and PDF",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -11,7 +11,8 @@
     "nodemailer": "^6.9.7",
     "exceljs": "^4.4.0",
     "jsdom": "^24.0.0",
-    "archiver": "^7.0.0"
+    "archiver": "^7.0.0",
+    "csv-parse": "^5.5.0"
   },
   "engines": {
     "node": ">=18.0.0"
