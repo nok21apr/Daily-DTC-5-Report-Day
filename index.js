@@ -8,7 +8,7 @@ const ExcelJS = require('exceljs');
 
 // --- Helper Functions ---
 
-// 1. ฟังก์ชันรอโหลดไฟล์ (คงเดิมตามไฟล์ล่าสุดของคุณ)
+// 1. ฟังก์ชันรอโหลดไฟล์ (คงเดิมตามไฟล์ล่าสุด)
 async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 300000) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
@@ -63,7 +63,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
     return xlsxPath;
 }
 
-// 2. ฟังก์ชันรอตารางข้อมูล (คงเดิมตามต้นฉบับ)
+// 2. ฟังก์ชันรอตารางข้อมูล (คงเดิม)
 async function waitForTableData(page, minRows = 2, timeout = 300000) {
     console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
     try {
@@ -112,11 +112,18 @@ async function convertReport5ToExcel(sourcePath, destPath) {
         console.log(`   🎨 Converting Report 5 with Full Formatting...`);
         const content = fs.readFileSync(sourcePath, 'utf-8');
         
-        if (!content.trim().startsWith('<')) { fs.copyFileSync(sourcePath, destPath); return; }
+        // ถ้าไม่ใช่ HTML ให้ Copy เลย
+        if (!content.trim().startsWith('<')) { 
+            fs.copyFileSync(sourcePath, destPath); 
+            return; 
+        }
 
         const dom = new JSDOM(content);
         const table = dom.window.document.querySelector('table');
-        if (!table) { fs.copyFileSync(sourcePath, destPath); return; }
+        if (!table) { 
+            fs.copyFileSync(sourcePath, destPath); 
+            return; 
+        }
 
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Forbidden Parking');
@@ -132,7 +139,7 @@ async function convertReport5ToExcel(sourcePath, destPath) {
 
             // จัดรูปแบบ Cell
             excelRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-                // Font เริ่มต้น
+                // Font เริ่มต้น (Angsana หรือใกล้เคียง)
                 cell.font = { name: 'Angsana New', size: 14 };
                 
                 // ตีเส้นทุกช่องเป็นค่าเริ่มต้น
@@ -145,10 +152,11 @@ async function convertReport5ToExcel(sourcePath, destPath) {
                     // หัวกระดาษ (4 บรรทัดแรก): ตัวหนา, ใหญ่, ชิดซ้าย, ไม่ต้องตีเส้น
                     cell.font = { bold: true, size: 16, name: 'Angsana New' };
                     cell.alignment = { vertical: 'middle', horizontal: 'left' };
-                    cell.border = {}; // ลบเส้นออกสำหรับหัวกระดาษ
+                    cell.border = {}; // ไม่ตีเส้นหัวกระดาษ
                 } 
                 // หัวตาราง (บรรทัดที่มี TH หรือบรรทัดที่ 5)
                 else if (rowIndex === 4 || cells[colNumber-1]?.tagName === 'TH' || rowData.some(d => d.includes('ลำดับ'))) {
+                    // หัวตาราง: สีเทา, ตัวหนา, กึ่งกลาง, มีเส้น
                     cell.font = { bold: true, size: 14, name: 'Angsana New' };
                     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD3D3D3' } };
                     cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
@@ -167,7 +175,7 @@ async function convertReport5ToExcel(sourcePath, destPath) {
                 const len = cell.value ? cell.value.toString().length : 10;
                 if (len > maxLength) maxLength = len;
             });
-            column.width = Math.min(Math.max(maxLength * 1.1, 10), 60);
+            column.width = Math.min(Math.max(maxLength * 1.2, 10), 60);
         });
 
         await workbook.xlsx.writeFile(destPath);
@@ -184,7 +192,7 @@ function getTodayFormatted() {
     return new Intl.DateTimeFormat('en-CA', options).format(date);
 }
 
-// Helper: ดึงค่า String จาก ExcelJS Cell (แก้ปัญหา Object)
+// Helper: ดึงค่า String จาก ExcelJS Cell
 function getStringValue(cell) {
     if (cell === null || cell === undefined) return '';
     if (typeof cell === 'object') {
@@ -216,20 +224,18 @@ async function extractDataFromXLSX(filePath, reportType) {
         const data = [];
 
         worksheet.eachRow((row, rowNumber) => {
-            // ข้าม Header
-            const startDataRow = (reportType === 'forbidden') ? 6 : 2;
-            if (rowNumber < startDataRow) return; 
-            
-            // อ่านค่าทุก Cell เป็น String ผ่าน getStringValue
+            // ข้าม Header: Report 5 มี Header 4-5 บรรทัด, Report อื่นมี 1-2
+            // เพื่อความชัวร์ ให้เริ่มดูเมื่อเจอแถวที่มีทะเบียนรถ
             const cells = (row.values || []).slice(1).map(getStringValue);
             if (cells.length < 3) return;
 
             // Regex Patterns
-            const plateRegex = /\d{1,3}-?\d{1,4}|[ก-ฮ]{1,3}\d{1,4}/; // ทะเบียน
+            const plateRegex = /[0-9]{1,3}-[0-9]{1,4}|[0-9]?[ก-ฮ]{1,3}-[0-9]{1,4}/; // ทะเบียน
             const timeRegex = /\d{1,2}:\d{2}(:\d{2})?/; // เวลา (HH:MM หรือ HH:MM:SS)
 
             // 1. หาทะเบียนรถ (Anchor Point)
-            const plateIndex = cells.findIndex(c => plateRegex.test(c) && c.length < 25 && !c.includes(':'));
+            // หา cell ที่มีรูปแบบทะเบียน และความยาวไม่เกิน 25 (กันพลาดไปจับ header ยาวๆ)
+            const plateIndex = cells.findIndex(c => plateRegex.test(c) && c.length < 15 && !c.includes(':'));
             
             if (plateIndex === -1) return; // ถ้าไม่เจอทะเบียน ข้าม
             
@@ -239,10 +245,11 @@ async function extractDataFromXLSX(filePath, reportType) {
             // กรองหา cell ที่เป็นเวลาทั้งหมดในแถว
             const timeCells = cells.filter(c => timeRegex.test(c));
             
-            // หาเวลาที่เป็น Duration (มักอยู่ท้ายสุด หรือค่าน้อยกว่า Time of Day)
-            // สมมติว่าค่าสุดท้ายคือ Duration (เพราะ Start/End time มักมาก่อน)
+            // หาเวลาที่เป็น Duration 
             let duration = "00:00:00";
             if (timeCells.length > 0) {
+                 // ถ้ามีหลายเวลา (เช่น เวลาเข้า, เวลาออก, รวมเวลา) เลือกตัวสุดท้าย (มักเป็น Duration รวม)
+                 // สำหรับ Forbidden Parking, Duration คือตัวสุดท้ายเช่นกัน
                  duration = timeCells[timeCells.length - 1];
             }
 
@@ -258,16 +265,20 @@ async function extractDataFromXLSX(filePath, reportType) {
             } 
             else if (reportType === 'forbidden') {
                 // Report 5: ต้องการ "ชื่อสถานี"
-                // ชื่อสถานีมักจะเป็นข้อความ (ไม่ใช่ตัวเลขล้วน ไม่ใช่วันที่) อยู่หลังทะเบียน
-                // ตัวอย่าง: "70-3719", "ห้ามจอด 314", ...
+                // หาข้อความที่ไม่ใช่ตัวเลข/เวลา ที่อยู่หลังทะเบียน
+                // ตัวอย่าง: [ลำดับ, ทะเบียน, เลขข้างรถ, ชื่อผู้ใช้, สถานี, เวลาเข้า, เวลาออก, ...]
                 let station = "";
-                const possibleStations = cells.slice(plateIndex + 1).filter(c => c.length > 2 && !timeRegex.test(c) && isNaN(c.replace(/[-/]/g, '')));
+                // หา Text ที่เป็นชื่อสถานที่ (มักอยู่ col 4 หรือ 5)
+                // มองหา string ที่ไม่ใช่ date, time, plate
+                const candidates = cells.slice(plateIndex + 1);
+                const stationCandidate = candidates.find(c => 
+                    c.length > 2 && 
+                    !timeRegex.test(c) && 
+                    isNaN(c.replace(/[-/:\s]/g, '')) // ไม่ใช่ตัวเลขหรือวันที่
+                );
                 
-                if (possibleStations.length > 0) {
-                    station = possibleStations[0]; // เอาตัวแรกที่เจอหลังทะเบียน
-                } else {
-                    station = "Unknown Station";
-                }
+                if (stationCandidate) station = stationCandidate;
+                else station = "Unknown Station";
                 
                 data.push({ plate, station, duration, durationMin: parseDurationToMinutes(duration) });
             }
@@ -306,7 +317,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Same Logic + Fix PDF & Report 5)...');
+    console.log('🚀 Starting DTC Automation (Fixed PDF & Report 5 Formatting)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -502,7 +513,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const file5 = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary (FIXED LOGIC)
+        // STEP 7: Generate PDF Summary (UPDATED LOGIC)
         // =================================================================
         console.log('📑 Step 7: Generating PDF Summary...');
 
