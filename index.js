@@ -266,7 +266,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.waitForSelector('#speed_max', { visible: true });
         await page.waitForSelector('#ddl_truck', { visible: true });
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate((start, end) => {
             document.getElementById('speed_max').value = '55';
@@ -312,7 +312,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.waitForSelector('#date9', { visible: true });
         await page.waitForSelector('#ddl_truck', { visible: true });
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -354,7 +354,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.waitForSelector('#date9', { visible: true });
         await page.waitForSelector('#ddl_truck', { visible: true }); // รอ Dropdown
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -377,7 +377,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await page.click('td:nth-of-type(6) > span');
 
         console.log('   ⏳ Waiting 2 mins...');
-        await new Promise(resolve => setTimeout(resolve, 120000));
+        await new Promise(resolve => setTimeout(resolve, 1100000));
 
         console.log('   Exporting Report 3...');
         await page.evaluate(() => {
@@ -401,7 +401,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.waitForSelector('#date9', { visible: true });
         await page.waitForSelector('#ddl_truck', { visible: true }); // รอ Dropdown
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -424,7 +424,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await page.click('td:nth-of-type(6) > span');
 
         console.log('   ⏳ Waiting 2 mins...');
-        await new Promise(resolve => setTimeout(resolve, 120000));
+        await new Promise(resolve => setTimeout(resolve, 1100000));
 
         console.log('   Exporting Report 4...');
         await page.evaluate(() => {
@@ -448,7 +448,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.waitForSelector('#date9', { visible: true });
         await page.waitForSelector('#ddl_truck', { visible: true });
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate((start, end) => {
             // 1. วันที่
@@ -481,7 +481,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         }, startDateTime, endDateTime);
 
         // รอสักครู่เพื่อให้ Dropdown สถานีโหลดใหม่ตามประเภท
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate(() => {
             // 4. เลือกสถานี "สถานีทั้งหมด" (Updated)
