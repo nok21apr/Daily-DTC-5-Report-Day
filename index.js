@@ -9,12 +9,11 @@ const { parse } = require('csv-parse/sync'); // ใช้สำหรับอ�
 // --- Helper Functions ---
 
 // 1. ฟังก์ชันรอโหลดไฟล์ และแปลงเป็น CSV (บังคับ CSV ทุกไฟล์)
-async function waitForDownloadAndRename(downloadPath, newFileName) {
+async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 300000) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
     const checkInterval = 10000; 
     let waittime = 0;
-    const maxWaitMs = 300000; // 5 นาที
 
     // วนลูปรอไฟล์จนกว่าจะเจอ หรือหมดเวลา
     while (waittime < maxWaitMs) {
@@ -179,6 +178,24 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     });
 }
 
+// 2. ฟังก์ชันรอตารางข้อมูล (Wait for Data Population)
+async function waitForTableData(page, minRows = 2, timeout = 300000) {
+    console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
+    try {
+        await page.waitForFunction((min) => {
+            const rows = document.querySelectorAll('table tr');
+            const bodyText = document.body.innerText;
+            if (bodyText.includes('ไม่พบข้อมูล') || bodyText.includes('No data found')) return true; 
+            return rows.length >= min; 
+        }, { timeout: timeout }, minRows);
+        
+        const rowCount = await page.evaluate(() => document.querySelectorAll('table tr').length);
+        console.log(`   ✅ Table populated with ${rowCount} rows.`);
+    } catch (e) {
+        console.warn('   ⚠️ Wait for table data timed out (Data might be empty).');
+    }
+}
+
 // --- Main Script ---
 
 (async () => {
@@ -250,13 +267,11 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         }, startDateTime, endDateTime);
         await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
         
-        // Hard Wait 5 mins
-        console.log('   ⏳ Waiting 5 mins...');
-        await new Promise(r => setTimeout(r, 300000)); 
+        await waitForTableData(page, 2, 300000); // Wait for Data
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
         // Convert to CSV
-        await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
+        const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
 
         // --- REPORT 2: Idling ---
         console.log('📊 Processing Report 2: Idling...');
@@ -269,20 +284,16 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             document.getElementById('date10').value = end;
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
-            if(document.getElementById('ddlMinute')) {
-                document.getElementById('ddlMinute').value = '10';
-                document.getElementById('ddlMinute').dispatchEvent(new Event('change'));
-            }
+            if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '10';
             var select = document.getElementById('ddl_truck'); 
             if (select) { for (let opt of select.options) { if (opt.text.includes('ทั้งหมด')) { select.value = opt.value; break; } } select.dispatchEvent(new Event('change', { bubbles: true })); }
         }, startDateTime, endDateTime);
         await page.click('td:nth-of-type(6) > span');
-        console.log('   ⏳ Waiting 3 mins...');
-        await new Promise(r => setTimeout(r, 180000));
+        await waitForTableData(page, 2, 180000); // Wait for Data
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
         // Convert to CSV
-        await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
+        const file2 = await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
 
         // --- REPORT 3: Sudden Brake ---
         console.log('📊 Processing Report 3: Sudden Brake...');
@@ -299,15 +310,14 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             if (select) { for (let opt of select.options) { if (opt.text.includes('ทั้งหมด')) { select.value = opt.value; break; } } select.dispatchEvent(new Event('change', { bubbles: true })); }
         }, startDateTime, endDateTime);
         await page.click('td:nth-of-type(6) > span');
-        console.log('   ⏳ Waiting 3 mins...'); 
-        await new Promise(r => setTimeout(r, 180000)); 
+        await waitForTableData(page, 2, 180000); // Wait for Data
         await page.evaluate(() => {
             const btns = Array.from(document.querySelectorAll('button'));
             const b = btns.find(b => b.innerText.includes('Excel') || b.title === 'Excel');
             if (b) b.click(); else document.querySelector('#table button:nth-of-type(3)')?.click();
         });
         // Convert to CSV
-        await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
+        const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // --- REPORT 4: Harsh Start ---
         console.log('📊 Processing Report 4: Harsh Start...');
@@ -340,8 +350,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             await page.evaluate(() => {
                 if (typeof sertch_data === 'function') { sertch_data(); } else { document.querySelector('td:nth-of-type(6) > span').click(); }
             });
-            console.log('   ⏳ Waiting 3 mins for Report 4 data...');
-            await new Promise(r => setTimeout(r, 180000));
+            await waitForTableData(page, 2, 180000); // Wait for Data
             
             await page.evaluate(() => {
                 const xpathResult = document.evaluate('//*[@id="table"]/div[1]/button[3]', document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
@@ -354,7 +363,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 }
             });
             // Convert to CSV
-            await waitForDownloadAndRename(downloadPath, 'Report4_HarshStart.xls');
+            const file4 = await waitForDownloadAndRename(downloadPath, 'Report4_HarshStart.xls');
         } catch (error) {
             console.error('❌ Report 4 Failed:', error.message);
         }
@@ -395,14 +404,14 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             for(var s of allSelects) { for(var i=0; i<s.options.length; i++) { if(s.options[i].text.includes('สถานีทั้งหมด')) { s.value = s.options[i].value; s.dispatchEvent(new Event('change', { bubbles: true })); break; } } }
         });
         await page.click('td:nth-of-type(7) > span');
-        await new Promise(r => setTimeout(r, 300000));
+        await waitForTableData(page, 2, 180000); // Wait for Data
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
         await page.evaluate(() => document.getElementById('btnexport').click());
         // Convert to CSV
         const file5 = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary (UPDATED FROM YOUR CODE)
+        // STEP 7: Generate PDF Summary (UPDATED WITH CSV LOGIC)
         // =================================================================
         console.log('📑 Step 7: Generating PDF Summary...');
 
@@ -490,26 +499,31 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             .page { width: 210mm; height: 296mm; position: relative; page-break-after: always; overflow: hidden; }
             .content { padding: 40px; }
             
+            /* Headers */
             .header-banner { background: #1E40AF; color: white; padding: 15px 40px; font-size: 24px; font-weight: bold; margin-bottom: 30px; }
             h1 { font-size: 32px; color: #1E40AF; margin-bottom: 10px; }
             
+            /* Grid Cards */
             .grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 50px; }
             .card { background: #F8FAFC; border-radius: 12px; padding: 30px; text-align: center; border: 1px solid #E2E8F0; }
             .card-title { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
             .card-value { font-size: 48px; font-weight: bold; margin: 10px 0; }
             .card-sub { font-size: 14px; color: #64748B; }
             
+            /* Colors */
             .c-blue { color: #1E40AF; }
             .c-orange { color: #F59E0B; }
             .c-red { color: #DC2626; }
             .c-purple { color: #9333EA; }
             
+            /* Charts */
             .chart-container { margin: 40px 0; }
             .bar-row { display: flex; align-items: center; margin-bottom: 15px; }
             .bar-label { width: 180px; text-align: right; padding-right: 15px; font-weight: 600; font-size: 14px; }
             .bar-track { flex-grow: 1; background: #F1F5F9; height: 30px; border-radius: 4px; overflow: hidden; }
             .bar-fill { height: 100%; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; color: white; font-size: 12px; font-weight: bold; }
             
+            /* Tables */
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
             th { background: #1E40AF; color: white; padding: 12px; text-align: left; }
             td { padding: 10px; border-bottom: 1px solid #E2E8F0; }
@@ -689,7 +703,8 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await page.pdf({
             path: pdfPath,
             format: 'A4',
-            printBackground: true
+            printBackground: true,
+            margin: { top: '0px', bottom: '0px', left: '0px', right: '0px' } // No margin as per template style
         });
         console.log(`   ✅ PDF Generated: ${pdfPath}`);
 
@@ -699,6 +714,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         console.log('📧 Step 8: Zipping CSVs & Sending Email...');
         
         const allFiles = fs.readdirSync(downloadPath);
+        // เลือกเฉพาะ Excel ที่โหลดเสร็จแล้ว (Converted_...csv)
         const csvsToZip = allFiles.filter(f => f.startsWith('Converted_') && f.endsWith('.csv'));
 
         if (csvsToZip.length > 0 || fs.existsSync(pdfPath)) {
