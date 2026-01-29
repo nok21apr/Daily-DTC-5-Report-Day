@@ -551,12 +551,12 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 truckSelect.dispatchEvent(new Event('change', { bubbles: true }));
             }
 
-            // 3. เลือกประเภทสถานี "พื้นที่ห้ามเข้า" (Updated)
+            // 3. เลือกประเภทสถานี "พื้นที่ห้ามเข้า" (Updated)หมายเหตุ web ใช้สระ อิ ตรงคำว่า พื้น
             // ค้นหา Select Element ทุกตัว เพื่อหาตัวที่มี Option นี้
             var allSelects = document.getElementsByTagName('select');
             for(var s of allSelects) {
                 for(var i=0; i<s.options.length; i++) {
-                    if(s.options[i].text.includes('พื้นที่ห้ามเข้า')) {
+                    if(s.options[i].text.includes('พิ้นที่ห้ามเข้า')) {
                         s.value = s.options[i].value;
                         s.dispatchEvent(new Event('change', { bubbles: true }));
                         break;
