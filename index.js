@@ -8,13 +8,14 @@ const ExcelJS = require('exceljs');
 
 // --- Helper Functions ---
 
-// 1. ฟังก์ชันรอโหลดไฟล์ + แปลงไฟล์
+// 1. ฟังก์ชันรอโหลดไฟล์ (ใช้ Hard Wait Loop เพื่อความชัวร์)
 async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 300000) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
-    const checkInterval = 100000; 
+    const checkInterval = 10000; 
     let waittime = 0;
 
+    // วนลูปรอไฟล์จนกว่าจะเจอ หรือหมดเวลา
     while (waittime < maxWaitMs) {
         const files = fs.readdirSync(downloadPath);
         downloadedFile = files.find(f => 
@@ -25,7 +26,7 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
         );
         
         if (downloadedFile) {
-            console.log(`   ✅ File detected: ${downloadedFile} (${waittime/10000}s)`);
+            console.log(`   ✅ File detected: ${downloadedFile} (${waittime/1000}s)`);
             break; 
         }
         
@@ -35,45 +36,45 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
 
     if (!downloadedFile) throw new Error(`Download timeout for ${newFileName}`);
 
-    await new Promise(resolve => setTimeout(resolve, 5000));
+    await new Promise(resolve => setTimeout(resolve, 10000)); // รอเขียนไฟล์ให้เสร็จสมบูรณ์
 
     const oldPath = path.join(downloadPath, downloadedFile);
     const finalFileName = `DTC_Completed_${newFileName}`;
     const newPath = path.join(downloadPath, finalFileName);
     
+    // ตรวจสอบขนาดไฟล์ต้องไม่ว่างเปล่า
     const stats = fs.statSync(oldPath);
     if (stats.size === 0) throw new Error(`Downloaded file is empty!`);
 
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     fs.renameSync(oldPath, newPath);
     
-    // แปลงเป็น XLSX
+    // แปลงเป็น XLSX ทันที เพื่อให้อ่านข้อมูลได้แม่นยำ
     const xlsxFileName = `Converted_${newFileName.replace('.xls', '.xlsx')}`;
     const xlsxPath = path.join(downloadPath, xlsxFileName);
-    
-    // ใช้ตัวแปลงแบบพิเศษสำหรับ Report 5 เพื่อความสวยงาม
-    if (newFileName.includes('Report5')) {
-        await convertReport5ToExcel(newPath, xlsxPath);
-    } else {
-        await convertHtmlToExcel(newPath, xlsxPath);
-    }
+    await convertHtmlToExcel(newPath, xlsxPath);
 
     return xlsxPath;
 }
 
-// 2. ฟังก์ชันรอตารางข้อมูล (Strict Wait)
+// 2. ฟังก์ชันรอตารางข้อมูล (Wait for Data Population)
+// สำคัญมาก! ต้องรอให้ตารางมีข้อมูลมากกว่า 2 แถว (Header + Data) ก่อนกด Export
 async function waitForTableData(page, minRows = 2, timeout = 300000) {
-    console.log(`   Waiting for table data (Max ${timeout/10000}s)...`);
+    console.log(`   Waiting for table data (Max ${timeout/1000}s)...`);
     try {
         await page.waitForFunction((min) => {
             const rows = document.querySelectorAll('table tr');
+            // ตรวจสอบว่ามีข้อมูล และไม่มีข้อความว่า "ไม่พบข้อมูล"
             const bodyText = document.body.innerText;
-            if (bodyText.includes('ไม่พบข้อมูล') || bodyText.includes('No data found')) return true;
+            if (bodyText.includes('ไม่พบข้อมูล') || bodyText.includes('No data found')) return true; // จบการรอแบบไม่มีข้อมูล
             return rows.length >= min; 
         }, { timeout: timeout }, minRows);
-        console.log('   ✅ Table data check passed.');
+        
+        // เช็คจำนวนแถวจริงๆ
+        const rowCount = await page.evaluate(() => document.querySelectorAll('table tr').length);
+        console.log(`   ✅ Table populated with ${rowCount} rows.`);
     } catch (e) {
-        console.warn('   ⚠️ Wait for table data timed out.');
+        console.warn('   ⚠️ Wait for table data timed out (Data might be empty).');
     }
 }
 
@@ -453,7 +454,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             for(let s of allSelects) { 
                 for(let i=0; i<s.options.length; i++) { 
                     const txt = s.options[i].text;
-                    if(txt.includes('พื้นที่ห้ามเข้า') || txt.includes('พิ้นที่ห้ามเข้า') || txt.includes('Forbidden')) { 
+                    if(txt.includes('พิ้นที่ห้ามเข้า')) { 
                         s.selectedIndex = i; typeSelect = s; break; 
                     } 
                 } 
