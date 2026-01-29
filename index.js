@@ -525,78 +525,74 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await waitForDownloadAndRename(downloadPath, 'Report4_HarshStart.xls');
 
         // =================================================================
-// STEP 6: REPORT 5 - Forbidden Parking (พื้นที่ห้ามจอด/เข้าสถานี)
-// =================================================================
+        // STEP 6: REPORT 5 - Forbidden Parking (พื้นที่ห้ามจอด/เข้าสถานี)
+        // =================================================================
 
-        console.log('📊 Processing Report 5: Forbidden Parking...');
+       console.log('📊 Processing Report 5: Forbidden Parking...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_Instation.php', { waitUntil: 'domcontentloaded' });
-        await page.waitForSelector('#date9', { visible: true });
         
-        // รอ Dropdown รถ
-        await page.waitForFunction(() => {
-            const s = document.getElementById('ddl_truck');
-            return s && s.options.length > 1; 
-        }, { timeout: 60000 });
+        await page.waitForSelector('#date9', { visible: true });
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 2000));
 
-        // ตั้งค่าตัวกรอง
         await page.evaluate((start, end) => {
+            // 1. วันที่
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
-            
-            // เลือก "ทั้งหมด"
-            const select = document.getElementById('ddl_truck');
-            if(select) { 
-                for(let i=0; i<select.options.length; i++) {
-                    if(select.options[i].text.includes('ทั้งหมด') || select.options[i].text.toLowerCase().includes('all')) {
-                        select.selectedIndex = i; break; 
+
+            // 2. เลือกทะเบียน "ทั้งหมด" (Updated)
+            var truckSelect = document.getElementById('ddl_truck'); 
+            if (truckSelect) {
+                for (var i = 0; i < truckSelect.options.length; i++) { 
+                    if (truckSelect.options[i].text.includes('ทั้งหมด')) { truckSelect.value = truckSelect.options[i].value; break; } 
+                } 
+                truckSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            // 3. เลือกประเภทสถานี "พื้นที่ห้ามเข้า" (Updated)
+            // ค้นหา Select Element ทุกตัว เพื่อหาตัวที่มี Option นี้
+            var allSelects = document.getElementsByTagName('select');
+            for(var s of allSelects) {
+                for(var i=0; i<s.options.length; i++) {
+                    if(s.options[i].text.includes('พื้นที่ห้ามเข้า')) {
+                        s.value = s.options[i].value;
+                        s.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
                     }
                 }
-                select.dispatchEvent(new Event('change', { bubbles: true })); 
-            }
-            
-            // เลือก "พื้นที่ห้ามเข้า" (Forbidden)
-            const allSelects = document.getElementsByTagName('select');
-            for(let s of allSelects) { 
-                for(let i=0; i<s.options.length; i++) { 
-                    if(s.options[i].text.includes('พื้นที่ห้ามเข้า')) { 
-                        s.value = s.options[i].value; 
-                        s.dispatchEvent(new Event('change', { bubbles: true })); 
-                        break; 
-                    } 
-                } 
             }
         }, startDateTime, endDateTime);
 
+        // รอสักครู่เพื่อให้ Dropdown สถานีโหลดใหม่ตามประเภท
         await new Promise(r => setTimeout(r, 2000));
-        
-        // เลือก "สถานีทั้งหมด"
+
         await page.evaluate(() => {
-            const allSelects = document.getElementsByTagName('select');
-            for(let s of allSelects) { 
-                for(let i=0; i<s.options.length; i++) { 
-                    if(s.options[i].text.includes('สถานีทั้งหมด')) { 
-                        s.value = s.options[i].value; 
-                        s.dispatchEvent(new Event('change', { bubbles: true })); 
-                        break; 
-                    } 
-                } 
+            // 4. เลือกสถานี "สถานีทั้งหมด" (Updated)
+            var allSelects = document.getElementsByTagName('select');
+            for(var s of allSelects) {
+                for(var i=0; i<s.options.length; i++) {
+                    if(s.options[i].text.includes('สถานีทั้งหมด')) {
+                        s.value = s.options[i].value;
+                        s.dispatchEvent(new Event('change', { bubbles: true }));
+                        break;
+                    }
+                }
             }
         });
 
-        // กดค้นหา
+        console.log('   Searching Report 5...');
         await page.click('td:nth-of-type(7) > span');
-        
-        // รอข้อมูล (ใช้ Hard Wait เพราะ Smart Wait เอาออกแล้ว)
-        console.log('   ⏳ Waiting 3 mins for Report 5 data...');
-        await new Promise(r => setTimeout(r, 180000));
 
-        // กด Export
+        console.log('   ⏳ Waiting 5 mins...');
+        await new Promise(resolve => setTimeout(resolve, 300000));
+
+        try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
+        console.log('   Exporting Report 5...');
         await page.evaluate(() => document.getElementById('btnexport').click());
         
-        // รอโหลดและใช้ฟังก์ชัน Convert แบบพิเศษ
-        const report5Raw = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
+        await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
         // เรียกใช้ฟังก์ชัน Convert พิเศษสำหรับ Report 5 (เขียนทับไฟล์ Converted เดิม)
         await convertReport5ToExcel(report5Raw.replace('Converted_', 'DTC_Completed_').replace('.xlsx', '.xls'), report5Raw);
 
