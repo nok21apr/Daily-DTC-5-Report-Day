@@ -377,7 +377,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await page.click('td:nth-of-type(6) > span');
 
         console.log('   ⏳ Waiting 2 mins...');
-        await new Promise(resolve => setTimeout(resolve, 1100000));
+        await new Promise(resolve => setTimeout(resolve, 120000));
 
         console.log('   Exporting Report 3...');
         await page.evaluate(() => {
@@ -424,7 +424,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await page.click('td:nth-of-type(6) > span');
 
         console.log('   ⏳ Waiting 2 mins...');
-        await new Promise(resolve => setTimeout(resolve, 1100000));
+        await new Promise(resolve => setTimeout(resolve, 120000));
 
         console.log('   Exporting Report 4...');
         await page.evaluate(() => {
@@ -510,7 +510,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary (Complete Logic)
+        // STEP 7: Generate PDF Summary
         // =================================================================
         console.log('📑 Step 7: Generating PDF Summary...');
 
@@ -529,7 +529,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         try { startData = await extractDataFromXLSX(fileMap.start, 'critical'); } catch(e){}
         const forbiddenData = await extractDataFromXLSX(fileMap.forbidden, 'forbidden');
 
-        // Aggregation for PDF
+        // Aggregation & PDF Generation (Same as before)
         const processStats = (data, key) => {
             const stats = {};
             data.forEach(d => {
@@ -549,7 +549,6 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const topForbidden = processStats(forbiddenData, 'durationMin');
         const totalCritical = brakeData.length + startData.length;
 
-        // Formatter for Table
         const formatDuration = (mins) => {
             if (!mins) return "00:00:00";
             const h = Math.floor(mins / 60);
@@ -586,176 +585,57 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             <div class="page-break">
                 <div class="text-center mb-16 mt-10">
                     <h1 class="text-4xl font-bold text-blue-900 mb-2">รายงานสรุปพฤติกรรมการขับขี่</h1>
-                    <h2 class="text-xl text-gray-600">Fleet Safety & Telematics Analysis Report</h2>
+                    <h2 class="text-2xl text-gray-600">Fleet Safety & Telematics Analysis Report</h2>
                     <p class="text-xl mt-6 text-gray-500">วันที่: ${todayStr} (06:00 - 18:00)</p>
                 </div>
-                
                 <div class="grid grid-cols-2 gap-8 px-10">
-                    <div class="card">
-                        <h3>Over Speed (ครั้ง)</h3>
-                        <div class="val text-blue-700">${speedData.length}</div>
-                        <p class="text-gray-500">เหตุการณ์ทั้งหมด</p>
-                    </div>
-                    <div class="card" style="background-color: #fff7ed; border-color: #fed7aa;">
-                        <h3 style="color: #9a3412;">Max Idling (นาที)</h3>
-                        <div class="val text-orange-600">${topIdling.length > 0 ? topIdling[0].durationMin.toFixed(0) : 0}</div>
-                        <p class="text-gray-500">สูงสุดต่อคัน</p>
-                    </div>
-                    <div class="card" style="background-color: #fef2f2; border-color: #fecaca;">
-                        <h3 style="color: #991b1b;">Critical Events</h3>
-                        <div class="val text-red-600">${totalCritical}</div>
-                        <p class="text-gray-500">เบรก/ออกตัว กระชาก</p>
-                    </div>
-                    <div class="card" style="background-color: #faf5ff; border-color: #e9d5ff;">
-                        <h3 style="color: #6b21a8;">Prohibited Parking</h3>
-                        <div class="val text-purple-700">${forbiddenData.length}</div>
-                        <p class="text-gray-500">เข้าพื้นที่ห้ามจอด (ครั้ง)</p>
-                    </div>
+                    <div class="card"><h3>Over Speed (ครั้ง)</h3><div class="val text-blue-700">${speedData.length}</div></div>
+                    <div class="card bg-orange-50"><h3>Max Idling (นาที)</h3><div class="val text-orange-600">${topIdling.length > 0 ? topIdling[0].durationMin.toFixed(0) : 0}</div></div>
+                    <div class="card bg-red-50"><h3>Critical Events</h3><div class="val text-red-600">${totalCritical}</div></div>
+                    <div class="card bg-purple-50"><h3>Prohibited</h3><div class="val text-purple-600">${forbiddenData.length}</div></div>
                 </div>
             </div>
 
-            <!-- PAGE 2: Speed Analysis -->
+            <!-- PAGE 2: Speed -->
             <div class="page-break">
                 <div class="header-blue text-2xl">1. การใช้ความเร็วเกินกำหนด (Over Speed Analysis)</div>
                 <div class="chart-container"><canvas id="speedChart"></canvas></div>
-                
-                <h3 class="text-xl font-bold text-gray-700 mb-2">Top 5 Over Speed Frequency</h3>
-                <table>
-                    <thead><tr><th width="10%">No.</th><th>ทะเบียนรถ (License Plate)</th><th width="20%">จำนวนครั้ง</th><th width="25%">รวมเวลา (Duration)</th></tr></thead>
-                    <tbody>
-                        ${topSpeed.map((d, i) => `
-                            <tr>
-                                <td class="text-center font-bold">${i+1}</td>
-                                <td>${d.plate}</td>
-                                <td class="text-center font-bold text-blue-700">${d.count}</td>
-                                <td>${formatDuration(d.durationMin)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                <table><thead><tr><th>ทะเบียนรถ</th><th>จำนวนครั้ง</th><th>รวมเวลา (นาที)</th></tr></thead>
+                <tbody>${topSpeed.map(d => `<tr><td>${d.plate}</td><td>${d.count}</td><td>${formatDuration(d.durationMin)}</td></tr>`).join('')}</tbody></table>
             </div>
 
-            <!-- PAGE 3: Idling Analysis -->
+            <!-- PAGE 3: Idling -->
             <div class="page-break">
                 <div class="header-blue text-2xl" style="background-color: #f59e0b;">2. การจอดไม่ดับเครื่อง (Idling Analysis)</div>
                 <div class="chart-container"><canvas id="idlingChart"></canvas></div>
-                
-                <h3 class="text-xl font-bold text-gray-700 mb-2">Top 5 Idling Duration</h3>
-                <table>
-                    <thead><tr><th width="10%">No.</th><th>ทะเบียนรถ</th><th width="20%">จำนวนครั้ง</th><th width="25%">รวมเวลา</th></tr></thead>
-                    <tbody>
-                        ${topIdling.map((d, i) => `
-                            <tr>
-                                <td class="text-center font-bold">${i+1}</td>
-                                <td>${d.plate}</td>
-                                <td class="text-center">${d.count}</td>
-                                <td class="font-bold text-orange-600">${formatDuration(d.durationMin)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                <table><thead><tr><th>ทะเบียนรถ</th><th>รวมเวลา (นาที)</th></tr></thead>
+                <tbody>${topIdling.map(d => `<tr><td>${d.plate}</td><td>${d.count}</td><td>${formatDuration(d.durationMin)}</td></tr>`).join('')}</tbody></table>
             </div>
 
-            <!-- PAGE 4: Critical Events -->
+            <!-- PAGE 4: Critical -->
             <div class="page-break">
                 <div class="header-blue text-2xl" style="background-color: #dc2626;">3. เหตุการณ์วิกฤต (Critical Safety Events)</div>
-                
-                <div class="mb-8">
-                    <h3 class="text-xl font-bold text-red-700 border-b-2 border-red-200 pb-2 mb-4">3.1 เบรกกะทันหัน (Sudden Brake)</h3>
-                    <table>
-                        <thead><tr><th width="30%">ทะเบียนรถ</th><th>รายละเอียด</th></tr></thead>
-                        <tbody>
-                            ${brakeData.length > 0 ? brakeData.slice(0, 10).map(d => `<tr><td>${d.plate}</td><td>${d.detail}</td></tr>`).join('') : '<tr><td colspan="2" class="text-center text-gray-400">ไม่มีเหตุการณ์</td></tr>'}
-                        </tbody>
-                    </table>
-                </div>
-
-                <div>
-                    <h3 class="text-xl font-bold text-red-700 border-b-2 border-red-200 pb-2 mb-4">3.2 ออกตัวกระชาก (Harsh Start)</h3>
-                    <table>
-                        <thead><tr><th width="30%">ทะเบียนรถ</th><th>รายละเอียด</th></tr></thead>
-                        <tbody>
-                            ${startData.length > 0 ? startData.slice(0, 10).map(d => `<tr><td>${d.plate}</td><td>${d.detail}</td></tr>`).join('') : '<tr><td colspan="2" class="text-center text-gray-400">ไม่มีเหตุการณ์</td></tr>'}
-                        </tbody>
-                    </table>
-                </div>
+                <h3 class="text-xl mt-4 font-bold text-red-700">3.1 เบรกกะทันหัน</h3>
+                <table><thead><tr><th>ทะเบียนรถ</th><th>รายละเอียด</th></tr></thead><tbody>${brakeData.slice(0, 10).map(d => `<tr><td>${d.plate}</td><td>${d.detail}</td></tr>`).join('')}</tbody></table>
+                <h3 class="text-xl mt-8 font-bold text-red-700">3.2 ออกตัวกระชาก</h3>
+                <table><thead><tr><th>ทะเบียนรถ</th><th>รายละเอียด</th></tr></thead><tbody>${startData.slice(0, 10).map(d => `<tr><td>${d.plate}</td><td>${d.detail}</td></tr>`).join('')}</tbody></table>
             </div>
 
-            <!-- PAGE 5: Prohibited Parking -->
+            <!-- PAGE 5: Forbidden -->
             <div>
                 <div class="header-blue text-2xl" style="background-color: #9333ea;">4. รายงานพื้นที่ห้ามจอด (Prohibited Parking)</div>
                 <div class="chart-container"><canvas id="forbiddenChart"></canvas></div>
-                
-                <h3 class="text-xl font-bold text-gray-700 mb-2">Top 5 Prohibited Parking Duration</h3>
-                <table>
-                    <thead><tr><th width="10%">No.</th><th width="25%">ทะเบียนรถ</th><th>ชื่อสถานี (Station)</th><th width="25%">รวมเวลา</th></tr></thead>
-                    <tbody>
-                        ${topForbidden.map((d, i) => `
-                            <tr>
-                                <td class="text-center font-bold">${i+1}</td>
-                                <td>${d.plate}</td>
-                                <td>${d.station}</td>
-                                <td class="font-bold text-purple-700">${formatDuration(d.durationMin)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
+                <table><thead><tr><th>ทะเบียนรถ</th><th>สถานี</th><th>รวมเวลา (นาที)</th></tr></thead>
+                <tbody>${topForbidden.map(d => `<tr><td>${d.plate}</td><td>${d.station}</td><td>${formatDuration(d.durationMin)}</td></tr>`).join('')}</tbody></table>
             </div>
 
             <script>
-                // Common Chart Options
-                const commonOptions = {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: { legend: { display: false } },
-                    scales: { y: { beginAtZero: true } }
-                };
-
-                // 1. Speed Chart (Frequency - Vertical)
-                new Chart(document.getElementById('speedChart'), {
-                    type: 'bar',
-                    data: {
-                        labels: ${JSON.stringify(topSpeed.map(d => d.plate))},
-                        datasets: [{ 
-                            label: 'Frequency', 
-                            data: ${JSON.stringify(topSpeed.map(d => d.count))}, 
-                            backgroundColor: '#1e40af',
-                            borderRadius: 4
-                        }]
-                    },
-                    options: commonOptions
+                const chartConfig = (id, label, labels, data, color) => new Chart(document.getElementById(id), {
+                    type: 'bar', data: { labels, datasets: [{ label, data, backgroundColor: color }] }, options: { maintainAspectRatio: false }
                 });
-
-                // 2. Idling Chart (Duration - Horizontal)
-                new Chart(document.getElementById('idlingChart'), {
-                    type: 'bar',
-                    indexAxis: 'y',
-                    data: {
-                        labels: ${JSON.stringify(topIdling.map(d => d.plate))},
-                        datasets: [{ 
-                            label: 'Minutes', 
-                            data: ${JSON.stringify(topIdling.map(d => d.durationMin))}, 
-                            backgroundColor: '#f59e0b',
-                            borderRadius: 4
-                        }]
-                    },
-                    options: commonOptions
-                });
-
-                // 3. Forbidden Chart (Duration - Vertical)
-                new Chart(document.getElementById('forbiddenChart'), {
-                    type: 'bar',
-                    data: {
-                        labels: ${JSON.stringify(topForbidden.map(d => d.plate))},
-                        datasets: [{ 
-                            label: 'Minutes', 
-                            data: ${JSON.stringify(topForbidden.map(d => d.durationMin))}, 
-                            backgroundColor: '#9333ea',
-                            borderRadius: 4
-                        }]
-                    },
-                    options: commonOptions
-                });
+                chartConfig('speedChart', 'Count', ${JSON.stringify(topSpeed.map(d=>d.plate))}, ${JSON.stringify(topSpeed.map(d=>d.count))}, '#1e40af');
+                chartConfig('idlingChart', 'Minutes', ${JSON.stringify(topIdling.map(d=>d.plate))}, ${JSON.stringify(topIdling.map(d=>d.durationMin))}, '#f59e0b');
+                chartConfig('forbiddenChart', 'Minutes', ${JSON.stringify(topForbidden.map(d=>d.plate))}, ${JSON.stringify(topForbidden.map(d=>d.durationMin))}, '#9333ea');
             </script>
         </body>
         </html>`;
@@ -769,6 +649,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             margin: { top: '20px', bottom: '20px', left: '20px', right: '20px' }
         });
         console.log(`   ✅ PDF Generated: ${pdfPath}`);
+
 
         // =================================================================
         // STEP 8: Zip & Email
