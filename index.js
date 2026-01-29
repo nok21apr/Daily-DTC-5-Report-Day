@@ -78,41 +78,99 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
     }
 }
 
-// 3. แปลง HTML -> Excel (ExcelJS)
+// 3. แปลง HTML -> Excel (ทั่วไป สำหรับ Report 1-4)
 async function convertHtmlToExcel(sourcePath, destPath) {
     try {
         const content = fs.readFileSync(sourcePath, 'utf-8');
-        // ถ้าไม่ใช่ HTML (เป็น Binary XLS อยู่แล้ว) ให้ Copy เลย
-        if (!content.trim().startsWith('<')) {
-             fs.copyFileSync(sourcePath, destPath);
-             return;
-        }
+        if (!content.trim().startsWith('<')) { fs.copyFileSync(sourcePath, destPath); return; }
 
         const dom = new JSDOM(content);
         const table = dom.window.document.querySelector('table');
-        
-        if (!table) {
-             console.warn('   ⚠️ No HTML Table found, copying original file.');
-             fs.copyFileSync(sourcePath, destPath);
-             return;
-        }
+        if (!table) { fs.copyFileSync(sourcePath, destPath); return; }
 
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Sheet1');
         const rows = Array.from(table.querySelectorAll('tr'));
 
         rows.forEach((row) => {
-            const cells = Array.from(row.querySelectorAll('td, th')).map(cell => cell.textContent.trim());
+            const cells = Array.from(row.querySelectorAll('td, th')).map(c => c.textContent.trim());
             worksheet.addRow(cells);
         });
         
-        // Auto-fit columns logic (Optional)
         worksheet.columns.forEach(column => { column.width = 20; });
+        await workbook.xlsx.writeFile(destPath);
+        console.log(`   ✅ Converted: ${path.basename(destPath)}`);
+    } catch (e) { fs.copyFileSync(sourcePath, destPath); }
+}
+
+// 4. แปลง Report 5 แบบพิเศษ (Full Format: หัวกระดาษ + ตีเส้น + จัดกลาง)
+async function convertReport5ToExcel(sourcePath, destPath) {
+    try {
+        console.log(`   🎨 Converting Report 5 with Full Formatting...`);
+        const content = fs.readFileSync(sourcePath, 'utf-8');
+        
+        if (!content.trim().startsWith('<')) { fs.copyFileSync(sourcePath, destPath); return; }
+
+        const dom = new JSDOM(content);
+        const table = dom.window.document.querySelector('table');
+        if (!table) { fs.copyFileSync(sourcePath, destPath); return; }
+
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Forbidden Parking');
+        
+        // ดึงทุกแถวโดยไม่ข้าม (รวม 4 บรรทัดแรกที่เป็นหัวกระดาษ)
+        const rows = Array.from(table.querySelectorAll('tr'));
+
+        rows.forEach((row, rowIndex) => {
+            const cells = Array.from(row.querySelectorAll('td, th'));
+            const rowData = cells.map(cell => cell.textContent.replace(/<[^>]*>/g, '').trim());
+            
+            const excelRow = worksheet.addRow(rowData);
+
+            // จัดรูปแบบ Cell
+            excelRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                // Font เริ่มต้น
+                cell.font = { name: 'Angsana New', size: 14 };
+                
+                // ตีเส้นทุกช่องเป็นค่าเริ่มต้น
+                cell.border = {
+                    top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' }
+                };
+
+                // จัดรูปแบบตามตำแหน่งแถว
+                if (rowIndex < 4) { 
+                    // หัวกระดาษ (4 บรรทัดแรก): ตัวหนา, ใหญ่, ชิดซ้าย, ไม่ต้องตีเส้น
+                    cell.font = { bold: true, size: 16, name: 'Angsana New' };
+                    cell.alignment = { vertical: 'middle', horizontal: 'left' };
+                    cell.border = {}; // ลบเส้นออกสำหรับหัวกระดาษ
+                } 
+                else if (rowIndex === 4 || cells[colNumber-1].tagName === 'TH' || rowData.some(d => d.includes('ลำดับ'))) {
+                    // หัวตาราง (บรรทัดที่ 5 หรือบรรทัดที่มี 'ลำดับ'): สีเทา, ตัวหนา, กึ่งกลาง, มีเส้น
+                    cell.font = { bold: true, size: 14, name: 'Angsana New' };
+                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD3D3D3' } };
+                    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+                } 
+                else {
+                    // ข้อมูลเนื้อหา: กึ่งกลาง, มีเส้น
+                    cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+                }
+            });
+        });
+
+        // Auto-fit Columns (ปรับความกว้าง)
+        worksheet.columns.forEach(column => {
+            let maxLength = 0;
+            column.eachCell({ includeEmpty: true }, function(cell) {
+                const len = cell.value ? cell.value.toString().length : 10;
+                if (len > maxLength) maxLength = len;
+            });
+            column.width = Math.min(Math.max(maxLength * 1.1, 10), 60);
+        });
 
         await workbook.xlsx.writeFile(destPath);
-        console.log(`   ✅ Converted to XLSX: ${path.basename(destPath)}`);
+        console.log(`   ✅ Report 5 Converted & Formatted: ${path.basename(destPath)}`);
     } catch (e) {
-        console.warn(`   ⚠️ Conversion failed: ${e.message}`);
+        console.warn(`   ⚠️ Report 5 Conversion Failed: ${e.message}`);
         fs.copyFileSync(sourcePath, destPath);
     }
 }
@@ -123,22 +181,30 @@ function getTodayFormatted() {
     return new Intl.DateTimeFormat('en-CA', options).format(date);
 }
 
-// ฟังก์ชันแปลงเวลา "HH:mm:ss" เป็นนาที
+// Helper: ดึงค่า String จาก ExcelJS Cell (แก้ปัญหา Object)
+function getStringValue(cell) {
+    if (cell === null || cell === undefined) return '';
+    if (typeof cell === 'object') {
+        if (cell.text) return cell.text; 
+        if (cell.result) return cell.result;
+        return String(cell);
+    }
+    return String(cell).trim();
+}
+
 function parseDurationToMinutes(durationStr) {
-    if (!durationStr || typeof durationStr !== 'string') return 0;
-    // หา pattern เวลา เช่น 02:15:30 หรือ 00:45
+    if (!durationStr) return 0;
+    // รองรับทั้ง HH:MM:SS และ X วัน Y ชั่วโมง Z นาที (ถ้ามี)
+    // เบื้องต้นใช้ Regex จับ HH:MM:SS หรือ HH:MM
     const match = durationStr.match(/(\d+):(\d+)(?::(\d+))?/);
     if (!match) return 0;
-
     const h = parseInt(match[1], 10);
     const m = parseInt(match[2], 10);
     const s = match[3] ? parseInt(match[3], 10) : 0;
-
     return (h * 60) + m + (s / 60);
 }
 
-// *** SMART DATA EXTRACTION ***
-// ดึงข้อมูลโดยใช้ Regex ค้นหา Pattern แทนการ Fix Column Index
+// *** FIXED & SMART DATA EXTRACTION ***
 async function extractDataFromXLSX(filePath, reportType) {
     try {
         if (!fs.existsSync(filePath)) return [];
@@ -148,50 +214,61 @@ async function extractDataFromXLSX(filePath, reportType) {
         const data = [];
 
         worksheet.eachRow((row, rowNumber) => {
-            if (rowNumber < 2) return; // Skip header
+            // ข้าม Header: Report 5 มี Header 4-5 บรรทัด, Report อื่นมี 1-2
+            const startDataRow = (reportType === 'forbidden') ? 6 : 2;
+            if (rowNumber < startDataRow) return; 
             
-            // อ่านค่าในแถว (กรองค่าว่างออก)
-            const rawCells = Array.isArray(row.values) ? row.values : [];
-            const cells = rawCells.map(v => (v !== null && v !== undefined) ? String(v).trim() : '');
-            
+            const cells = (row.values || []).slice(1).map(getStringValue);
             if (cells.length < 3) return;
 
-            // Regex Definition
-            const plateRegex = /\d{1,3}-?\d{1,4}|[ก-ฮ]{1,3}\d{1,4}/; // หาทะเบียน
-            const timeRegex = /\d{1,2}:\d{2}/; // หาเวลาที่มี : (เช่น 00:05:00)
+            // Regex Patterns
+            const plateRegex = /\d{1,3}-?\d{1,4}|[ก-ฮ]{1,3}\d{1,4}/; // ทะเบียน
+            const timeRegex = /\d{1,2}:\d{2}/; // เวลา (HH:MM)
 
             // 1. หาทะเบียนรถ (Anchor Point)
             const plateIndex = cells.findIndex(c => plateRegex.test(c) && c.length < 25 && !c.includes(':'));
-            if (plateIndex === -1) return; // ถ้าไม่มีทะเบียน ข้าม
+            
+            // ถ้าไม่เจอทะเบียน ให้ข้ามแถวนี้
+            if (plateIndex === -1) return;
             
             const plate = cells[plateIndex];
 
             // 2. หาเวลา (Duration)
-            // กวาดหาทุก cell ที่เป็นเวลา แล้วเอาตัวสุดท้าย (เพราะ Duration รวมมักอยู่ท้ายสุด)
             const timeCells = cells.filter(c => timeRegex.test(c));
-            const duration = timeCells.length > 0 ? timeCells[timeCells.length - 1] : "00:00:00";
+            let duration = "00:00:00";
+            if (timeCells.length > 0) {
+                 // ถ้ามีหลายเวลา เลือกตัวสุดท้าย (มักเป็น Duration)
+                 duration = timeCells[timeCells.length - 1];
+            }
 
             if (reportType === 'speed' || reportType === 'idling') {
                 data.push({ plate, duration, durationMin: parseDurationToMinutes(duration) });
             } 
             else if (reportType === 'critical') {
-                // Detail: หา text ยาวๆ ที่ไม่ใช่ทะเบียน และไม่ใช่เวลา (เช่น "Speed Drop...")
-                let detail = cells.slice(plateIndex + 1).find(c => c.length > 4 && !timeRegex.test(c) && !plateRegex.test(c));
-                if (!detail) detail = "Critical Event"; 
+                // Report 3, 4: ต้องการ "รายละเอียด" ไม่ใช่เวลา
+                // หาข้อความยาวๆ ที่ไม่ใช่ทะเบียน และไม่ใช่เวลา ที่อยู่หลังทะเบียน
+                let detail = cells.slice(plateIndex + 1).find(c => c.length > 3 && !timeRegex.test(c) && !plateRegex.test(c));
+                if (!detail) detail = "Critical Event";
                 data.push({ plate, detail });
             } 
             else if (reportType === 'forbidden') {
-                // Station: หาชื่อสถานี (อยู่หลังทะเบียน 1 หรือ 2 ช่อง)
+                // Report 5: ต้องการ "ชื่อสถานี" และ "รวมเวลา"
+                // ชื่อสถานีมักอยู่ถัดจากทะเบียน 1-2 ช่อง
                 let station = "";
-                const possibleStations = cells.slice(plateIndex + 1).filter(c => c.length > 2 && !timeRegex.test(c));
-                if (possibleStations.length > 0) station = possibleStations[0];
-                else station = "Unknown Area";
+                // หาข้อความที่ไม่ใช่เวลา และไม่ใช่ตัวเลขล้วนๆ
+                const possibleStations = cells.slice(plateIndex + 1).filter(c => c.length > 2 && !timeRegex.test(c) && isNaN(c.replace(/,/g, '')));
+                
+                if (possibleStations.length > 0) {
+                    station = possibleStations[0]; // เอาตัวแรกที่เจอหลังทะเบียน
+                } else {
+                    station = "Unknown Station";
+                }
                 
                 data.push({ plate, station, duration, durationMin: parseDurationToMinutes(duration) });
             }
         });
         
-        console.log(`      -> Extracted ${data.length} rows from ${path.basename(filePath)}`);
+        console.log(`      -> Extracted ${data.length} records from ${path.basename(filePath)}`);
         return data;
     } catch (e) {
         console.warn(`   ⚠️ Extract Error ${path.basename(filePath)}: ${e.message}`);
@@ -224,7 +301,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (Strict Wait & Smart PDF)...');
+    console.log('🚀 Starting DTC Automation (Same Logic + Better PDF)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -240,6 +317,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     
     await page.setViewport({ width: 1920, height: 1080 });
     await page.emulateTimezone('Asia/Bangkok');
+
 
     try {
         // Step 1: Login
@@ -510,7 +588,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary
+        // STEP 7: Generate PDF Summary (UPDATED LOGIC)
         // =================================================================
         console.log('📑 Step 7: Generating PDF Summary...');
 
@@ -529,7 +607,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         try { startData = await extractDataFromXLSX(fileMap.start, 'critical'); } catch(e){}
         const forbiddenData = await extractDataFromXLSX(fileMap.forbidden, 'forbidden');
 
-        // Aggregation & PDF Generation (Same as before)
+        // Aggregation Logic (Top 5)
         const processStats = (data, key) => {
             const stats = {};
             data.forEach(d => {
@@ -549,6 +627,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const topForbidden = processStats(forbiddenData, 'durationMin');
         const totalCritical = brakeData.length + startData.length;
 
+        // Formatter
         const formatDuration = (mins) => {
             if (!mins) return "00:00:00";
             const h = Math.floor(mins / 60);
@@ -557,7 +636,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
         };
 
-        // HTML Template matching FleetSafetyReportv2.tex.pdf
+        // HTML Template matching FleetSafetyReport style
         const htmlContent = `
         <!DOCTYPE html>
         <html lang="th">
@@ -589,10 +668,22 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                     <p class="text-xl mt-6 text-gray-500">วันที่: ${todayStr} (06:00 - 18:00)</p>
                 </div>
                 <div class="grid grid-cols-2 gap-8 px-10">
-                    <div class="card"><h3>Over Speed (ครั้ง)</h3><div class="val text-blue-700">${speedData.length}</div></div>
-                    <div class="card bg-orange-50"><h3>Max Idling (นาที)</h3><div class="val text-orange-600">${topIdling.length > 0 ? topIdling[0].durationMin.toFixed(0) : 0}</div></div>
-                    <div class="card bg-red-50"><h3>Critical Events</h3><div class="val text-red-600">${totalCritical}</div></div>
-                    <div class="card bg-purple-50"><h3>Prohibited</h3><div class="val text-purple-600">${forbiddenData.length}</div></div>
+                    <div class="card">
+                        <h3>Over Speed (ครั้ง)</h3>
+                        <div class="val text-blue-700">${speedData.length}</div>
+                    </div>
+                    <div class="card" style="background-color: #fff7ed; border-color: #fed7aa;">
+                        <h3 style="color: #9a3412;">Max Idling (นาที)</h3>
+                        <div class="val text-orange-600">${topIdling.length > 0 ? topIdling[0].durationMin.toFixed(0) : 0}</div>
+                    </div>
+                    <div class="card" style="background-color: #fef2f2; border-color: #fecaca;">
+                        <h3 style="color: #991b1b;">Critical Events</h3>
+                        <div class="val text-red-600">${totalCritical}</div>
+                    </div>
+                    <div class="card" style="background-color: #faf5ff; border-color: #e9d5ff;">
+                        <h3 style="color: #6b21a8;">Prohibited Parking</h3>
+                        <div class="val text-purple-700">${forbiddenData.length}</div>
+                    </div>
                 </div>
             </div>
 
@@ -608,7 +699,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             <div class="page-break">
                 <div class="header-blue text-2xl" style="background-color: #f59e0b;">2. การจอดไม่ดับเครื่อง (Idling Analysis)</div>
                 <div class="chart-container"><canvas id="idlingChart"></canvas></div>
-                <table><thead><tr><th>ทะเบียนรถ</th><th>รวมเวลา (นาที)</th></tr></thead>
+                <table><thead><tr><th>ทะเบียนรถ</th><th>จำนวนครั้ง</th><th>รวมเวลา (นาที)</th></tr></thead>
                 <tbody>${topIdling.map(d => `<tr><td>${d.plate}</td><td>${d.count}</td><td>${formatDuration(d.durationMin)}</td></tr>`).join('')}</tbody></table>
             </div>
 
