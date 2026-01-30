@@ -289,25 +289,38 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         // REPORT 2: Idling
         console.log('📊 Processing Report 2: Idling...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_02.php', { waitUntil: 'domcontentloaded' });
+        
         await page.waitForSelector('#date9', { visible: true });
-        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
             document.getElementById('date10').value = end;
             document.getElementById('date9').dispatchEvent(new Event('change'));
             document.getElementById('date10').dispatchEvent(new Event('change'));
+            
             if(document.getElementById('ddlMinute')) document.getElementById('ddlMinute').value = '10';
-            var select = document.getElementById('ddl_truck'); 
-            if (select) { for (let opt of select.options) { if (opt.text.includes('ทั้งหมด')) { select.value = opt.value; break; } } select.dispatchEvent(new Event('change', { bubbles: true })); }
-        }, startDateTime, endDateTime);
-        
-        await page.click('td:nth-of-type(6) > span');
-        
-        // Hard Wait 3 mins
-        console.log('   ⏳ Waiting 3 mins...');
-        await new Promise(r => setTimeout(r, 180000));
 
+            // เลือกทะเบียน "ทั้งหมด"
+            var selectElement = document.getElementById('ddl_truck'); 
+            if (selectElement) {
+                var options = selectElement.options; 
+                for (var i = 0; i < options.length; i++) { 
+                    if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+                } 
+                selectElement.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+        }, startDateTime, endDateTime);
+
+        console.log('   Searching Report 2...');
+        await page.click('td:nth-of-type(6) > span');
+
+        console.log('   ⏳ Waiting 5 mins...');
+        await new Promise(resolve => setTimeout(resolve, 300000));
+
+        try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
+        console.log('   Exporting Report 2...');
         await page.evaluate(() => document.getElementById('btnexport').click());
         const file2 = await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
 
