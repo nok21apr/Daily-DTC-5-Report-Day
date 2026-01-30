@@ -1,7 +1,7 @@
 {
   "name": "dtc-daily-report-automation",
-  "version": "3.1.0",
-  "description": "Daily Report Download with Mixed Format (HTML/CSV) and PDF",
+  "version": "3.3.0",
+  "description": "Daily Report Download (CSV & New PDF Logic)",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
