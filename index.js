@@ -5,18 +5,17 @@ const nodemailer = require('nodemailer');
 const { JSDOM } = require('jsdom');
 const archiver = require('archiver');
 const { parse } = require('csv-parse/sync');
-const ExcelJS = require('exceljs');
 
 // --- Helper Functions ---
 
-// 1. ฟังก์ชันรอโหลดไฟล์ และแปลงเป็น CSV (Universal Converter)
+// 1. ฟังก์ชันรอโหลดไฟล์ และแปลงเป็น CSV (บังคับ CSV ทุกไฟล์)
 async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 300000) {
     console.log(`   Waiting for download: ${newFileName}...`);
     let downloadedFile = null;
     const checkInterval = 10000; 
     let waittime = 0;
 
-    // วนลูปรอไฟล์
+    // วนลูปรอไฟล์จนกว่าจะเจอ หรือหมดเวลา
     while (waittime < maxWaitMs) {
         const files = fs.readdirSync(downloadPath);
         downloadedFile = files.find(f => 
@@ -43,83 +42,53 @@ async function waitForDownloadAndRename(downloadPath, newFileName, maxWaitMs = 3
     const finalFileName = `DTC_Completed_${newFileName}`;
     const newPath = path.join(downloadPath, finalFileName);
     
-    // ตรวจสอบขนาด
+    // ตรวจสอบขนาดไฟล์
     const stats = fs.statSync(oldPath);
     if (stats.size === 0) throw new Error(`Downloaded file is empty!`);
 
     if (fs.existsSync(newPath)) fs.unlinkSync(newPath);
     fs.renameSync(oldPath, newPath);
     
-    // แปลงเป็น CSV (UTF-8) เสมอ
+    // แปลงเป็น CSV (UTF-8) เสมอ เพื่อให้ Step 7 อ่านได้ถูกต้อง
     const csvFileName = `Converted_${newFileName.replace('.xls', '.csv')}`;
     const csvPath = path.join(downloadPath, csvFileName);
-    await convertToCsv(newPath, csvPath); // ใช้ฟังก์ชันใหม่ที่รองรับทั้ง HTML/XLSX
+    await convertHtmlToCsv(newPath, csvPath);
     
     return csvPath;
 }
 
-// 2. ฟังก์ชันแปลงไฟล์ (ฉลาดขึ้น รองรับทั้ง Binary XLSX และ HTML Table) -> CSV
-async function convertToCsv(sourcePath, destPath) {
+// 2. แปลง HTML -> CSV (UTF-8 BOM)
+async function convertHtmlToCsv(sourcePath, destPath) {
     try {
-        console.log(`   🔄 Converting to CSV...`);
-        const buffer = fs.readFileSync(sourcePath);
-        let rows = [];
+        console.log(`   🔄 Converting HTML to CSV...`);
+        const content = fs.readFileSync(sourcePath, 'utf-8');
+        const dom = new JSDOM(content);
+        const table = dom.window.document.querySelector('table');
 
-        // ตรวจสอบ Header ไฟล์ว่าเป็น Zip/XLSX หรือไม่ (PK..)
-        const isXLSX = buffer.length > 4 && buffer[0] === 0x50 && buffer[1] === 0x4B;
-
-        if (isXLSX) {
-            console.log('      - Detected: Binary XLSX (Using ExcelJS)');
-            const workbook = new ExcelJS.Workbook();
-            await workbook.xlsx.load(buffer);
-            const worksheet = workbook.getWorksheet(1); // อ่าน Sheet แรก
-            
-            worksheet.eachRow((row) => {
-                // ExcelJS เริ่ม index 1, slice ออกเพื่อให้เป็น 0-based array
-                const rowValues = Array.isArray(row.values) ? row.values.slice(1) : [];
-                rows.push(rowValues.map(v => {
-                    if (v === null || v === undefined) return '';
-                    if (typeof v === 'object') return v.text || v.result || ''; // Handle Rich Text
-                    return String(v).trim();
-                }));
-            });
-        } else {
-            console.log('      - Detected: HTML/Text (Using JSDOM)');
-            const content = buffer.toString('utf8');
-            const dom = new JSDOM(content);
-            const table = dom.window.document.querySelector('table');
-            if (table) {
-                const trs = Array.from(table.querySelectorAll('tr'));
-                rows = trs.map(tr => 
-                    Array.from(tr.querySelectorAll('td, th')).map(td => td.textContent.replace(/\s+/g, ' ').trim())
-                );
-            } else {
-                console.warn('      ⚠️ No table found in HTML source.');
-            }
+        if (!table) {
+             console.warn('   ⚠️ No HTML table found. Copying original file.');
+             fs.copyFileSync(sourcePath, destPath);
+             return;
         }
 
-        if (rows.length > 0) {
-            // เขียน CSV พร้อม BOM
-            let csvContent = '\uFEFF'; 
-            rows.forEach(row => {
-                const escapedRow = row.map(cell => {
-                    if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
-                        return `"${cell.replace(/"/g, '""')}"`;
-                    }
-                    return cell;
-                });
-                csvContent += escapedRow.join(',') + '\n';
-            });
-            fs.writeFileSync(destPath, csvContent, 'utf8');
-            console.log(`   ✅ CSV Created: ${path.basename(destPath)}`);
-        } else {
-            console.warn('   ⚠️ No data extracted for CSV conversion.');
-            // Fallback: Copy original if conversion yields nothing (prevent crash)
-            // fs.copyFileSync(sourcePath, destPath); 
-        }
+        const rows = Array.from(table.querySelectorAll('tr'));
+        let csvContent = '\uFEFF'; // BOM for Excel UTF-8 support
 
+        rows.forEach(row => {
+            const cells = Array.from(row.querySelectorAll('td, th'));
+            const rowData = cells.map(cell => {
+                let text = cell.textContent.replace(/\s+/g, ' ').trim();
+                if (text.includes('"')) text = text.replace(/"/g, '""');
+                if (text.includes(',') || text.includes('"')) text = `"${text}"`;
+                return text;
+            });
+            csvContent += rowData.join(',') + '\n';
+        });
+
+        fs.writeFileSync(destPath, csvContent, 'utf8');
+        console.log(`   ✅ CSV Created: ${path.basename(destPath)}`);
     } catch (e) {
-        console.warn(`   ⚠️ CSV Conversion error: ${e.message}`);
+        console.warn(`   ⚠️ CSV Conversion failed: ${e.message}`);
     }
 }
 
@@ -139,14 +108,14 @@ async function waitForTableData(page, minRows = 2, timeout = 300000) {
     }
 }
 
-// --- DATA PROCESSING HELPERS (Updated Logic) ---
+// --- DATA PROCESSING HELPERS (New Logic) ---
 
 function parseDurationToSeconds(timeStr) {
     if (!timeStr) return 0;
     
     // กรณี 1: "0 ชม. 1 นาที 31 วินาที"
     const thaiMatch = timeStr.match(/(?:(\d+)\s*ชม\.)?\s*(?:(\d+)\s*นาที)?\s*(?:(\d+)\s*วินาที)?/);
-    if (thaiMatch && timeStr.includes('นาที')) {
+    if (thaiMatch && (timeStr.includes('นาที') || timeStr.includes('ชม.'))) {
         const h = parseInt(thaiMatch[1] || 0);
         const m = parseInt(thaiMatch[2] || 0);
         const s = parseInt(thaiMatch[3] || 0);
@@ -170,6 +139,7 @@ function formatSeconds(totalSeconds) {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
+// อ่านและประมวลผล CSV
 function processCSV(filePath, skipLines, colMap) {
     try {
         if (!fs.existsSync(filePath)) {
@@ -191,12 +161,12 @@ function processCSV(filePath, skipLines, colMap) {
         return records.map(row => {
             const data = {};
             for (const [key, index] of Object.entries(colMap)) {
-                // index ที่ส่งมาเป็น 1-based (Excel Style) ต้องลบ 1
-                const idx = parseInt(index) - 1; 
+                // index ที่ส่งมาเป็น 0-based index ของ Array
+                const idx = parseInt(index); 
                 data[key] = row[idx] ? row[idx].trim() : '';
             }
             return data;
-        }).filter(r => r.license); 
+        }).filter(r => r.license && r.license !== 'รวม' && r.license !== 'Total'); 
     } catch (err) {
         console.error(`Error reading ${filePath}:`, err.message);
         return [];
@@ -234,7 +204,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation (CSV Fix & New PDF)...');
+    console.log('🚀 Starting DTC Automation (Strict Wait + CSV Logic V2)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -269,15 +239,18 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const endDateTime = `${todayStr} 18:00`;
         console.log(`🕒 Global Time Settings: ${startDateTime} to ${endDateTime}`);
 
-        // --- Step 2 to 6: DOWNLOAD REPORTS (STRICT WAIT & AUTOMATIC CSV CONVERSION) ---
+        // --- Step 2 to 6: DOWNLOAD REPORTS ---
         
         // REPORT 1: Over Speed
         console.log('📊 Processing Report 1: Over Speed...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#speed_max', { visible: true });
         
-        // Hard Wait 10s before fill
-        await new Promise(r => setTimeout(r, 10000));
+        // รอ Dropdown รถ
+        await page.waitForFunction(() => {
+            const s = document.getElementById('ddl_truck');
+            return s && s.options.length > 1; 
+        }, { timeout: 60000 });
 
         await page.evaluate((start, end) => {
             document.getElementById('speed_max').value = '55';
@@ -293,18 +266,14 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             for (let opt of select.options) { if (opt.text.includes('ทั้งหมด')) { select.value = opt.value; break; } } 
             select.dispatchEvent(new Event('change', { bubbles: true }));
         }, startDateTime, endDateTime);
-
-        console.log('   Searching Report 1...');
-        await page.evaluate(() => {
-            if(typeof sertch_data === 'function') sertch_data();
-            else document.querySelector("span[onclick='sertch_data();']").click();
-        });
-
-        console.log('   ⏳ Waiting 5 mins...');
-        await new Promise(resolve => setTimeout(resolve, 300000));
         
+        await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
+        
+        // Hard Wait 5 mins
+        console.log('   ⏳ Waiting 5 mins (Strict)...');
+        await new Promise(r => setTimeout(r, 300000)); 
+
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
-        console.log('   Exporting Report 1...');
         await page.evaluate(() => document.getElementById('btnexport').click());
         // Convert to CSV
         const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
@@ -313,7 +282,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         console.log('📊 Processing Report 2: Idling...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_02.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
-        await new Promise(r => setTimeout(r, 10000));
+        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -327,17 +296,19 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.click('td:nth-of-type(6) > span');
         
+        // Hard Wait 3 mins
         console.log('   ⏳ Waiting 3 mins (Strict)...');
         await new Promise(r => setTimeout(r, 180000));
 
         await page.evaluate(() => document.getElementById('btnexport').click());
+        // Convert to CSV
         const file2 = await waitForDownloadAndRename(downloadPath, 'Report2_Idling.xls');
 
         // REPORT 3: Sudden Brake
         console.log('📊 Processing Report 3: Sudden Brake...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/report_hd.php', { waitUntil: 'domcontentloaded' });
         await page.waitForSelector('#date9', { visible: true });
-        await new Promise(r => setTimeout(r, 10000));
+        await page.waitForFunction(() => document.getElementById('ddl_truck').options.length > 1);
 
         await page.evaluate((start, end) => {
             document.getElementById('date9').value = start;
@@ -350,6 +321,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.click('td:nth-of-type(6) > span');
         
+        // Hard Wait 3 mins
         console.log('   ⏳ Waiting 3 mins (Strict)...'); 
         await new Promise(r => setTimeout(r, 180000)); 
 
@@ -358,6 +330,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             const b = btns.find(b => b.innerText.includes('Excel') || b.title === 'Excel');
             if (b) b.click(); else document.querySelector('#table button:nth-of-type(3)')?.click();
         });
+        // Convert to CSV
         const file3 = await waitForDownloadAndRename(downloadPath, 'Report3_SuddenBrake.xls');
 
         // REPORT 4: Harsh Start
@@ -365,7 +338,10 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         try {
             await page.goto('https://gps.dtc.co.th/ultimate/Report/report_ha.php', { waitUntil: 'domcontentloaded' });
             await page.waitForSelector('#date9', { visible: true, timeout: 60000 });
-            await new Promise(r => setTimeout(r, 10000));
+            await page.waitForFunction(() => {
+                const select = document.getElementById('ddl_truck');
+                return select && select.options.length > 1;
+            }, { timeout: 60000 });
             
             console.log('   Setting Report 4 Conditions (Programmatic)...');
             await page.evaluate((start, end) => {
@@ -391,6 +367,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 if (typeof sertch_data === 'function') { sertch_data(); } else { document.querySelector('td:nth-of-type(6) > span').click(); }
             });
             
+            // Hard Wait 3 Mins2
             console.log('   ⏳ Waiting 3 mins (Strict)...');
             await new Promise(r => setTimeout(r, 180000));
             
@@ -405,6 +382,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                     if (excelBtn) excelBtn.click(); else throw new Error("Cannot find Export button for Report 4");
                 }
             });
+            // Convert to CSV
             const file4 = await waitForDownloadAndRename(downloadPath, 'Report4_HarshStart.xls');
         } catch (error) {
             console.error('❌ Report 4 Failed:', error.message);
@@ -448,6 +426,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         
         await page.click('td:nth-of-type(7) > span');
         
+        // Hard Wait 3 mins
         console.log('   ⏳ Waiting 3 mins (Strict)...');
         await new Promise(r => setTimeout(r, 180000));
         
@@ -457,7 +436,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const file5 = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary (USING CSV DATA)
+        // STEP 7: Generate PDF Summary (FROM CSV - Logic V2)
         // =================================================================
         console.log('📑 Step 7: Generating PDF Summary...');
 
@@ -470,50 +449,69 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         };
 
         // 1. Process Report 1: Over Speed
-        // (CSV Index: 0=No, 1=License, ..., Last=Duration)
+        // Criteria: License from Col B (index 1) with "-", Time from Col E (index 4)
+        // Skip 5 header lines
         const rawSpeed = processCSV(FILES_CSV.OVERSPEED, 5, { license: 1, duration: 4 }); 
         const speedStats = {};
         rawSpeed.forEach(r => {
-            if (!speedStats[r.license]) speedStats[r.license] = { count: 0, time: 0, license: r.license };
-            speedStats[r.license].count++;
-            speedStats[r.license].time += parseDurationToSeconds(r.duration);
+            if (r.license && r.license.includes('-')) {
+                if (!speedStats[r.license]) speedStats[r.license] = { count: 0, time: 0, license: r.license };
+                speedStats[r.license].count++;
+                speedStats[r.license].time += parseDurationToSeconds(r.duration);
+            }
         });
-        const topSpeed = Object.values(speedStats).sort((a, b) => b.count - a.count).slice(0, 5);
+        // Sort by Total Time DESC
+        const topSpeed = Object.values(speedStats).sort((a, b) => b.time - a.time).slice(0, 10);
         const totalOverSpeed = rawSpeed.length;
 
         // 2. Process Report 2: Idling
+        // Criteria: License from Col B (index 1) with "-", Time from Col E (index 4)
+        // Skip 6 header lines
         const rawIdling = processCSV(FILES_CSV.IDLING, 6, { license: 1, duration: 4 });
         const idleStats = {};
         rawIdling.forEach(r => {
-            if (!idleStats[r.license]) idleStats[r.license] = { count: 0, time: 0, license: r.license };
-            idleStats[r.license].count++;
-            idleStats[r.license].time += parseDurationToSeconds(r.duration);
+            if (r.license && r.license.includes('-')) {
+                if (!idleStats[r.license]) idleStats[r.license] = { count: 0, time: 0, license: r.license };
+                idleStats[r.license].count++;
+                idleStats[r.license].time += parseDurationToSeconds(r.duration);
+            }
         });
-        const topIdle = Object.values(idleStats).sort((a, b) => b.time - a.time).slice(0, 5);
+        // Sort by Total Time DESC
+        const topIdle = Object.values(idleStats).sort((a, b) => b.time - a.time).slice(0, 10);
         const maxIdleCar = topIdle.length > 0 ? topIdle[0] : { time: 0, license: '-' };
 
         // 3. Process Report 3 & 4
-        const rawBrake = fs.existsSync(FILES_CSV.SUDDEN_BRAKE) ? processCSV(FILES_CSV.SUDDEN_BRAKE, 4, { license: 2, v_start: 4, v_end: 5 }) : [];
-        const rawStart = (FILES_CSV.HARSH_START && fs.existsSync(FILES_CSV.HARSH_START)) ? processCSV(FILES_CSV.HARSH_START, 4, { license: 2, v_start: 4, v_end: 5 }) : [];
+        // Criteria: License from Col B (index 1), Speed details
+        const rawBrake = fs.existsSync(FILES_CSV.SUDDEN_BRAKE) ? processCSV(FILES_CSV.SUDDEN_BRAKE, 4, { license: 1, v_start: 4, v_end: 5 }) : [];
+        const rawStart = (FILES_CSV.HARSH_START && fs.existsSync(FILES_CSV.HARSH_START)) ? processCSV(FILES_CSV.HARSH_START, 4, { license: 1, v_start: 4, v_end: 5 }) : [];
         
         const criticalEvents = [
             ...rawBrake.map(r => ({ ...r, type: 'Sudden Brake', level: 'High' })),
             ...rawStart.map(r => ({ ...r, type: 'Harsh Start', level: 'Medium' }))
-        ];
+        ].filter(r => r.license && r.license.includes('-'));
 
-        // 4. Process Report 5
-        const rawForbidden = processCSV(FILES_CSV.PROHIBITED, 5, { license: 1, station: 4, duration: 9 });
-        const forbiddenList = rawForbidden.map(r => ({
-            license: r.license,
-            station: r.station,
-            timeSec: parseDurationToSeconds(r.duration),
-            timeStr: r.duration
-        })).sort((a, b) => b.timeSec - a.timeSec).slice(0, 8);
+        // 4. Process Report 5: Prohibited
+        // Criteria: License from Col C (index 2), Station from Col E (index 4), Time from Col H (index 7)
+        // Skip 5 header lines (assuming based on snippet)
+        const rawForbidden = processCSV(FILES_CSV.PROHIBITED, 5, { license: 2, station: 4, duration: 7 });
+        const forbiddenList = rawForbidden
+            .filter(r => r.license && r.license.includes('-'))
+            .map(r => ({
+                license: r.license,
+                station: r.station,
+                timeSec: parseDurationToSeconds(r.duration),
+                timeStr: r.duration
+            }))
+            .sort((a, b) => b.timeSec - a.timeSec)
+            .slice(0, 10); // Top 10
         
+        // Chart Stats
         const forbiddenChartStats = {};
         rawForbidden.forEach(r => {
-            if(!forbiddenChartStats[r.license]) forbiddenChartStats[r.license] = 0;
-            forbiddenChartStats[r.license] += parseDurationToSeconds(r.duration);
+            if (r.license && r.license.includes('-')) {
+                if(!forbiddenChartStats[r.license]) forbiddenChartStats[r.license] = 0;
+                forbiddenChartStats[r.license] += parseDurationToSeconds(r.duration);
+            }
         });
         const topForbiddenChart = Object.entries(forbiddenChartStats)
             .map(([license, time]) => ({ license, time }))
@@ -603,13 +601,13 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             <div class="page">
             <div class="header-banner">1. การใช้ความเร็วเกินกำหนด (Over Speed Analysis)</div>
             <div class="content">
-                <h3>Top 5 Over Speed Frequency</h3>
+                <h3>Top 10 Over Speed by Duration</h3>
                 <div class="chart-container">
-                ${topSpeed.map(item => `
+                ${topSpeed.slice(0, 5).map(item => `
                     <div class="bar-row">
                     <div class="bar-label">${item.license}</div>
                     <div class="bar-track">
-                        <div class="bar-fill" style="width: ${(item.count / (topSpeed[0]?.count || 1)) * 100}%; background: #1E40AF;">${item.count}</div>
+                        <div class="bar-fill" style="width: ${(item.time / (topSpeed[0]?.time || 1)) * 100}%; background: #1E40AF;">${formatSeconds(item.time)}</div>
                     </div>
                     </div>
                 `).join('')}
@@ -637,13 +635,13 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             <div class="page">
             <div class="header-banner">2. การจอดไม่ดับเครื่อง (Idling Analysis)</div>
             <div class="content">
-                <h3>Top 5 Idling Duration (Minutes)</h3>
+                <h3>Top 10 Idling by Duration</h3>
                 <div class="chart-container">
-                ${topIdle.map(item => `
+                ${topIdle.slice(0, 5).map(item => `
                     <div class="bar-row">
                     <div class="bar-label">${item.license}</div>
                     <div class="bar-track">
-                        <div class="bar-fill" style="width: ${(item.time / (topIdle[0]?.time || 1)) * 100}%; background: #F59E0B;">${Math.round(item.time / 60)}m</div>
+                        <div class="bar-fill" style="width: ${(item.time / (topIdle[0]?.time || 1)) * 100}%; background: #F59E0B;">${formatSeconds(item.time)}</div>
                     </div>
                     </div>
                 `).join('')}
@@ -671,19 +669,40 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             <div class="page">
             <div class="header-banner">3. เหตุการณ์วิกฤต (Critical Safety Events)</div>
             <div class="content">
+                <h3 style="color: #DC2626;">3.1 Sudden Brake (เบรกกะทันหัน)</h3>
                 <table>
                 <thead>
-                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>รายละเอียด</th><th>ประเภท</th></tr>
+                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>รายละเอียด</th><th>ระดับความเสี่ยง</th></tr>
                 </thead>
                 <tbody>
-                    ${criticalEvents.map((item, idx) => `
+                    ${criticalEvents.filter(x => x.type === 'Sudden Brake').map((item, idx) => `
                     <tr>
                         <td>${idx + 1}</td>
                         <td>${item.license}</td>
                         <td>Speed: ${item.v_start} &#8594; ${item.v_end} km/h</td>
-                        <td class="risk-${item.level}">${item.type}</td>
+                        <td class="risk-${item.level}">${item.level}</td>
                     </tr>
                     `).join('')}
+                    ${criticalEvents.filter(x => x.type === 'Sudden Brake').length === 0 ? '<tr><td colspan="4" style="text-align:center">ไม่มีข้อมูล</td></tr>' : ''}
+                </tbody>
+                </table>
+
+                <br><br>
+                <h3 style="color: #F59E0B;">3.2 Harsh Start (ออกตัวกระชาก)</h3>
+                <table>
+                <thead>
+                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>รายละเอียด</th><th>ระดับความเสี่ยง</th></tr>
+                </thead>
+                <tbody>
+                    ${criticalEvents.filter(x => x.type === 'Harsh Start').map((item, idx) => `
+                    <tr>
+                        <td>${idx + 1}</td>
+                        <td>${item.license}</td>
+                        <td>Speed: ${item.v_start} &#8594; ${item.v_end} km/h</td>
+                        <td class="risk-${item.level}">${item.level}</td>
+                    </tr>
+                    `).join('')}
+                    ${criticalEvents.filter(x => x.type === 'Harsh Start').length === 0 ? '<tr><td colspan="4" style="text-align:center">ไม่มีข้อมูล</td></tr>' : ''}
                 </tbody>
                 </table>
             </div>
@@ -699,7 +718,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                     <div class="bar-row">
                     <div class="bar-label">${item.license}</div>
                     <div class="bar-track">
-                        <div class="bar-fill" style="width: ${(item.time / (topForbiddenChart[0]?.time || 1)) * 100}%; background: #9333EA;">${Math.round(item.time / 60)}m</div>
+                        <div class="bar-fill" style="width: ${(item.time / (topForbiddenChart[0]?.time || 1)) * 100}%; background: #9333EA;">${formatSeconds(item.time)}</div>
                     </div>
                     </div>
                 `).join('')}
