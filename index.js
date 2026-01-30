@@ -246,13 +246,10 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         // REPORT 1: Over Speed
         console.log('📊 Processing Report 1: Over Speed...');
         await page.goto('https://gps.dtc.co.th/ultimate/Report/Report_03.php', { waitUntil: 'domcontentloaded' });
-        await page.waitForSelector('#speed_max', { visible: true });
         
-        // รอ Dropdown รถ
-        await page.waitForFunction(() => {
-            const s = document.getElementById('ddl_truck');
-            return s && s.options.length > 1; 
-        }, { timeout: 60000 });
+        await page.waitForSelector('#speed_max', { visible: true });
+        await page.waitForSelector('#ddl_truck', { visible: true });
+        await new Promise(r => setTimeout(r, 10000));
 
         await page.evaluate((start, end) => {
             document.getElementById('speed_max').value = '55';
@@ -264,18 +261,27 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 document.getElementById('ddlMinute').value = '1';
                 document.getElementById('ddlMinute').dispatchEvent(new Event('change'));
             }
-            var select = document.getElementById('ddl_truck'); 
-            for (let opt of select.options) { if (opt.text.includes('ทั้งหมด')) { select.value = opt.value; break; } } 
-            select.dispatchEvent(new Event('change', { bubbles: true }));
+            
+            // เลือกทะเบียน "ทั้งหมด"
+            var selectElement = document.getElementById('ddl_truck'); 
+            var options = selectElement.options; 
+            for (var i = 0; i < options.length; i++) { 
+                if (options[i].text.includes('ทั้งหมด')) { selectElement.value = options[i].value; break; } 
+            } 
+            selectElement.dispatchEvent(new Event('change', { bubbles: true }));
         }, startDateTime, endDateTime);
-        
-        await page.evaluate(() => { if(typeof sertch_data === 'function') sertch_data(); else document.querySelector("span[onclick='sertch_data();']").click(); });
-        
-        // Hard Wait 5 mins
-        console.log('   ⏳ Waiting 5 mins...');
-        await new Promise(r => setTimeout(r, 300000)); 
 
+        console.log('   Searching Report 1...');
+        await page.evaluate(() => {
+            if(typeof sertch_data === 'function') sertch_data();
+            else document.querySelector("span[onclick='sertch_data();']").click();
+        });
+
+        console.log('   ⏳ Waiting 5 mins...');
+        await new Promise(resolve => setTimeout(resolve, 300000));
+        
         try { await page.waitForSelector('#btnexport', { visible: true, timeout: 60000 }); } catch(e) {}
+        console.log('   Exporting Report 1...');
         await page.evaluate(() => document.getElementById('btnexport').click());
         // Convert to CSV
         const file1 = await waitForDownloadAndRename(downloadPath, 'Report1_OverSpeed.xls');
