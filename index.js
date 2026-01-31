@@ -1,12 +1,12 @@
 /**
  * DTC Automation Script
- * Version: 2.0.0 (Revised based on User Requirements)
+ * Version: 3.0.0 (Revised based on User Requirements V3)
  * Last Updated: 31/01/2026
  * Changes:
- * - Dynamic Header Detection (Search for 'ลำดับ')
- * - License Plate Filtering ('-')
- * - Time Calculation (End - Start)
- * - Specific Column Mapping for Report 5
+ * - Report 1 & 2: License=Col B, Time=Col D - Col C
+ * - Report 3 & 4: License=Col B, Show Date from Col D, Speed E->F
+ * - Report 5: Graph strictly HH:MM:SS, Table Header renamed
+ * - All: Dynamic Header Detection ('ลำดับ')
  */
 
 const puppeteer = require('puppeteer');
@@ -119,14 +119,13 @@ async function convertToCsv(sourcePath, destPath) {
     }
 }
 
-// --- NEW HELPER: Parse Thai Date (DD/MM/YYYY HH:mm:ss) ---
+// --- Helper: Parse Thai Date (DD/MM/YYYY HH:mm:ss) ---
 function parseDateTimeToSeconds(dateStr) {
     if (!dateStr) return 0;
     // Format: 31/01/2026 06:13:09
     const parts = dateStr.split(/[ /:]/);
     if (parts.length < 6) return 0;
     
-    // parts: 0=DD, 1=MM, 2=YYYY, 3=HH, 4=mm, 5=ss
     const date = new Date(
         parseInt(parts[2]),       // Year
         parseInt(parts[1]) - 1,   // Month (0-based)
@@ -138,9 +137,8 @@ function parseDateTimeToSeconds(dateStr) {
     return date.getTime() / 1000;
 }
 
-// --- NEW HELPER: Parse Duration "Day:Hour:Minute" (From Report 5 Col J) ---
+// --- Helper: Parse Duration "Day:Hour:Minute" (From Report 5 Col J) ---
 function parseDayHourMinuteToSeconds(durationStr) {
-    // Format examples: "00:00:08" (Day:Hour:Minute) based on header
     if (!durationStr) return 0;
     const parts = durationStr.split(':').map(Number);
     if (parts.length === 3) {
@@ -152,7 +150,7 @@ function parseDayHourMinuteToSeconds(durationStr) {
     return 0;
 }
 
-// --- HELPER: Format Seconds to HH:MM:SS ---
+// --- Helper: Format Seconds to HH:MM:SS ---
 function formatSeconds(totalSeconds) {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60);
@@ -160,8 +158,8 @@ function formatSeconds(totalSeconds) {
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
 }
 
-// --- NEW FUNCTION: Process CSV with Dynamic Header & Rules ---
-function processCSV_V2(filePath, config) {
+// --- FUNCTION: Process CSV V3 ---
+function processCSV_V3(filePath, config) {
     try {
         if (!fs.existsSync(filePath)) {
             console.warn(`File not found: ${filePath}`);
@@ -194,28 +192,30 @@ function processCSV_V2(filePath, config) {
         const results = [];
 
         dataRows.forEach(row => {
-            // Get License Plate based on config index
+            // Get License Plate from configured column
             const license = row[config.colLicense] ? row[config.colLicense].trim() : '';
 
-            // 3. Filter: Must contain "-"
+            // Filter: Must contain "-" (To exclude footer sums/headers)
             if (license && license.includes('-')) {
                 const item = { license };
 
                 // Calculate Time: (End - Start)
+                // Used for Report 1 & 2
                 if (config.useTimeCalc && config.colStart !== undefined && config.colEnd !== undefined) {
-                    const t1 = parseDateTimeToSeconds(row[config.colStart]);
-                    const t2 = parseDateTimeToSeconds(row[config.colEnd]);
+                    const t1 = parseDateTimeToSeconds(row[config.colStart]); // Col C
+                    const t2 = parseDateTimeToSeconds(row[config.colEnd]);   // Col D
                     item.durationSec = (t2 > t1) ? (t2 - t1) : 0;
                     item.durationStr = formatSeconds(item.durationSec);
                 }
                 
-                // Specific for Report 5 (Col J)
+                // Specific for Report 5 (Duration from Raw String)
                 if (config.colDurationRaw !== undefined) {
-                    item.durationStrRaw = row[config.colDurationRaw];
+                    item.durationStrRaw = row[config.colDurationRaw]; // Col J
                     item.durationSec = parseDayHourMinuteToSeconds(item.durationStrRaw);
                 }
 
                 // Other fields
+                if (config.colDate !== undefined) item.date = row[config.colDate]; // Col D for Rep 3/4
                 if (config.colStation !== undefined) item.station = row[config.colStation];
                 if (config.colSpeedStart !== undefined) item.v_start = row[config.colSpeedStart];
                 if (config.colSpeedEnd !== undefined) item.v_end = row[config.colSpeedEnd];
@@ -263,7 +263,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
     if (fs.existsSync(downloadPath)) fs.rmSync(downloadPath, { recursive: true, force: true });
     fs.mkdirSync(downloadPath);
 
-    console.log('🚀 Starting DTC Automation V2 (Revised Logic)...');
+    console.log('🚀 Starting DTC Automation V3 (Revised V3)...');
     
     const browser = await puppeteer.launch({
         headless: true,
@@ -465,9 +465,9 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const file5 = await waitForDownloadAndRename(downloadPath, 'Report5_ForbiddenParking.xls');
 
         // =================================================================
-        // STEP 7: Generate PDF Summary (REVISED LOGIC)
+        // STEP 7: Generate PDF Summary (REVISED V3)
         // =================================================================
-        console.log('📑 Step 7: Generating PDF Summary (Revised)...');
+        console.log('📑 Step 7: Generating PDF Summary (Revised V3)...');
 
         const FILES_CSV = {
             OVERSPEED: file1,
@@ -478,8 +478,8 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         };
 
         // 1. Process Report 1: Over Speed
-        // Logic: Find 'ลำดับ'. License=Col 1. Start=Col 2. End=Col 3.
-        const rawSpeed = processCSV_V2(FILES_CSV.OVERSPEED, { 
+        // Logic: License=Col B(1), Start=Col C(2), End=Col D(3). Calc: D-C.
+        const rawSpeed = processCSV_V3(FILES_CSV.OVERSPEED, { 
             colLicense: 1, 
             colStart: 2, 
             colEnd: 3, 
@@ -496,8 +496,8 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const totalOverSpeed = rawSpeed.length;
 
         // 2. Process Report 2: Idling
-        // Logic: Find 'ลำดับ'. License=Col 1. Start=Col 2. End=Col 3.
-        const rawIdling = processCSV_V2(FILES_CSV.IDLING, { 
+        // Logic: License=Col B(1), Start=Col C(2), End=Col D(3). Calc: D-C.
+        const rawIdling = processCSV_V3(FILES_CSV.IDLING, { 
             colLicense: 1, 
             colStart: 2, 
             colEnd: 3, 
@@ -514,32 +514,32 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         const maxIdleCar = topIdle.length > 0 ? topIdle[0] : { time: 0, license: '-' };
 
         // 3. Process Report 3 & 4 (Events)
-        // Logic: Find 'ลำดับ'. License=Col 1 (Name). Speed Start=Col 4. Speed End=Col 5.
-        // Based on snippet: Col 1 is "ชื่อรถ" (has dash), Col 2 is "ทะเบียนรถ" (sometimes ID). 
-        // We stick to Col 1 as it usually matches the format "XX-XXXX (Alias)".
-        const rawBrake = fs.existsSync(FILES_CSV.SUDDEN_BRAKE) ? processCSV_V2(FILES_CSV.SUDDEN_BRAKE, {
+        // Logic: License=Col B(1). Date=Col D(3). Speed Start=Col E(4). Speed End=Col F(5).
+        const rawBrake = fs.existsSync(FILES_CSV.SUDDEN_BRAKE) ? processCSV_V3(FILES_CSV.SUDDEN_BRAKE, {
             colLicense: 1,
+            colDate: 3,
             colSpeedStart: 4,
             colSpeedEnd: 5
         }) : [];
 
-        const rawStart = (FILES_CSV.HARSH_START && fs.existsSync(FILES_CSV.HARSH_START)) ? processCSV_V2(FILES_CSV.HARSH_START, {
+        const rawStart = (FILES_CSV.HARSH_START && fs.existsSync(FILES_CSV.HARSH_START)) ? processCSV_V3(FILES_CSV.HARSH_START, {
             colLicense: 1,
+            colDate: 3,
             colSpeedStart: 4,
             colSpeedEnd: 5
         }) : [];
         
         const criticalEvents = [
-            ...rawBrake.map(r => ({ ...r, type: 'Sudden Brake', level: 'High' })),
-            ...rawStart.map(r => ({ ...r, type: 'Harsh Start', level: 'Medium' }))
+            ...rawBrake.map(r => ({ ...r, type: 'Sudden Brake', level: r.date })), // Use Date as Level field
+            ...rawStart.map(r => ({ ...r, type: 'Harsh Start', level: r.date }))
         ];
 
         // 4. Process Report 5: Prohibited
-        // Logic: License=Col C(2), Station=Col E(4), Duration=Col J(9)
-        const rawForbidden = processCSV_V2(FILES_CSV.PROHIBITED, {
+        // Logic (Same as V2 but changing output): License=Col C(2), Station=Col E(4), Duration=Col J(9)
+        const rawForbidden = processCSV_V3(FILES_CSV.PROHIBITED, {
             colLicense: 2,
             colStation: 4,
-            colDurationRaw: 9 // Use raw column J
+            colDurationRaw: 9 
         });
 
         const forbiddenList = rawForbidden
@@ -589,8 +589,6 @@ function zipFiles(sourceDir, outPath, filesToZip) {
             th { background: #1E40AF; color: white; padding: 12px; text-align: left; }
             td { padding: 10px; border-bottom: 1px solid #E2E8F0; }
             tr:nth-child(even) { background: #F8FAFC; }
-            .risk-High { color: #DC2626; font-weight: bold; }
-            .risk-Medium { color: #F59E0B; font-weight: bold; }
             </style>
         </head>
         <body>
@@ -705,7 +703,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 <h3 style="color: #DC2626;">3.1 Sudden Brake (เบรกกะทันหัน)</h3>
                 <table>
                 <thead>
-                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>รายละเอียด</th><th>ระดับความเสี่ยง</th></tr>
+                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>รายละเอียด</th><th>วันที่บันทึก</th></tr>
                 </thead>
                 <tbody>
                     ${criticalEvents.filter(x => x.type === 'Sudden Brake').map((item, idx) => `
@@ -713,7 +711,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                         <td>${idx + 1}</td>
                         <td>${item.license}</td>
                         <td>Speed: ${item.v_start} &#8594; ${item.v_end} km/h</td>
-                        <td class="risk-${item.level}">${item.level}</td>
+                        <td>${item.level}</td>
                     </tr>
                     `).join('')}
                     ${criticalEvents.filter(x => x.type === 'Sudden Brake').length === 0 ? '<tr><td colspan="4" style="text-align:center">ไม่มีข้อมูล</td></tr>' : ''}
@@ -724,7 +722,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 <h3 style="color: #F59E0B;">3.2 Harsh Start (ออกตัวกระชาก)</h3>
                 <table>
                 <thead>
-                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>รายละเอียด</th><th>ระดับความเสี่ยง</th></tr>
+                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>รายละเอียด</th><th>วันที่บันทึก</th></tr>
                 </thead>
                 <tbody>
                     ${criticalEvents.filter(x => x.type === 'Harsh Start').map((item, idx) => `
@@ -732,7 +730,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                         <td>${idx + 1}</td>
                         <td>${item.license}</td>
                         <td>Speed: ${item.v_start} &#8594; ${item.v_end} km/h</td>
-                        <td class="risk-${item.level}">${item.level}</td>
+                        <td>${item.level}</td>
                     </tr>
                     `).join('')}
                     ${criticalEvents.filter(x => x.type === 'Harsh Start').length === 0 ? '<tr><td colspan="4" style="text-align:center">ไม่มีข้อมูล</td></tr>' : ''}
@@ -751,7 +749,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                     <div class="bar-row">
                     <div class="bar-label">${item.license}</div>
                     <div class="bar-track">
-                        <div class="bar-fill" style="width: ${(item.time / (topForbiddenChart[0]?.time || 1)) * 100}%; background: #9333EA;">${item.time > 0 ? formatSeconds(item.time) : '< 1 min'}</div>
+                        <div class="bar-fill" style="width: ${(item.time / (topForbiddenChart[0]?.time || 1)) * 100}%; background: #9333EA;">${formatSeconds(item.time)}</div>
                     </div>
                     </div>
                 `).join('')}
@@ -759,7 +757,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
 
                 <table>
                 <thead>
-                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>ชื่อสถานี</th><th>รวมเวลา (Col J)</th></tr>
+                    <tr><th>No.</th><th>ทะเบียนรถ</th><th>ชื่อสถานี</th><th>รวมเวลา</th></tr>
                 </thead>
                 <tbody>
                     ${forbiddenList.map((item, idx) => `
@@ -818,7 +816,7 @@ function zipFiles(sourceDir, outPath, filesToZip) {
                 from: `"DTC Reporter" <${EMAIL_USER}>`,
                 to: EMAIL_TO,
                 subject: `รายงานสรุปพฤติกรรมการขับขี่ (Fleet Safety Report) - ${today}`,
-                text: `เรียน ผู้เกี่ยวข้อง\n\nระบบส่งรายงานประจำวัน (06:00 - 18:00) ดังแนบ:\n1. ไฟล์ข้อมูลดิบ CSV (อยู่ใน Zip)\n2. ไฟล์ PDF สรุปภาพรวม (Revised V2)\n\nขอบคุณครับ\nDTC Automation Bot V2`,
+                text: `เรียน ผู้เกี่ยวข้อง\n\nระบบส่งรายงานประจำวัน (06:00 - 18:00) ดังแนบ:\n1. ไฟล์ข้อมูลดิบ CSV (อยู่ใน Zip)\n2. ไฟล์ PDF สรุปภาพรวม (Revised V3)\n\nขอบคุณครับ\nDTC Automation Bot V3`,
                 attachments: attachments
             });
             console.log(`   ✅ Email Sent Successfully!`);
