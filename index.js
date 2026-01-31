@@ -209,6 +209,12 @@ function readCleanCSV(filePath) {
         }
     }
 
+   function getTodayFormatted() {
+    const date = new Date();
+    const options = { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Bangkok' };
+    return new Intl.DateTimeFormat('en-CA', options).format(date);
+   }
+
     if (headerIndex === -1) {
         console.warn(`⚠️ Warning: Could not find valid header in ${path.basename(filePath)}`);
         return [];
