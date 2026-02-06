@@ -280,12 +280,12 @@ function zipFiles(sourceDir, outPath, filesToZip) {
         // Step 1: Login
         console.log('1️⃣ Step 1: Login...');
         await page.goto('https://gps.dtc.co.th/ultimate/index.php', { waitUntil: 'domcontentloaded' });
-        await page.waitForSelector('#txtname', { visible: true, timeout: 60000 });
+        await page.waitForSelector('#txtname', { visible: true, timeout: 90000 });
         await page.type('#txtname', DTC_USERNAME);
         await page.type('#txtpass', DTC_PASSWORD);
         await Promise.all([
             page.evaluate(() => document.getElementById('btnLogin').click()),
-            page.waitForFunction(() => !document.querySelector('#txtname'), { timeout: 60000 })
+            page.waitForFunction(() => !document.querySelector('#txtname'), { timeout: 90000 })
         ]);
         console.log('✅ Login Success');
 
